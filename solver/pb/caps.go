@@ -68,6 +68,7 @@ const (
 	CapMetaExportCache apicaps.CapID = "meta.exportcache"
 
 	CapRemoteCacheGHA apicaps.CapID = "cache.gha"
+	CapRemoteCacheS3  apicaps.CapID = "cache.s3"
 
 	CapMergeOp apicaps.CapID = "mergeop"
 	CapDiffOp  apicaps.CapID = "diffop"
@@ -383,6 +384,7 @@ func init() {
 		Enabled: true,
 		Status:  apicaps.CapStatusExperimental,
 	})
+<<<<<<< HEAD
 	Caps.Init(apicaps.Cap{
 		ID:      CapMergeOp,
 		Enabled: true,
@@ -390,6 +392,11 @@ func init() {
 	})
 	Caps.Init(apicaps.Cap{
 		ID:      CapDiffOp,
+=======
+
+	Caps.Init(apicaps.Cap{
+		ID:      CapRemoteCacheS3,
+>>>>>>> 54cd6235 (add s3 cache)
 		Enabled: true,
 		Status:  apicaps.CapStatusExperimental,
 	})
