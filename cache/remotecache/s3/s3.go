@@ -30,7 +30,6 @@ import (
 
 const (
 	attrBucket  = "bucket"
-	attrPath    = "path"
 	attrRegion  = "region"
 	attrRole    = "role"
 	attrSession = "session"
@@ -42,7 +41,6 @@ const (
 type Config struct {
 	Scope   string
 	Bucket  string
-	Path    string
 	Region  string
 	Role    string
 	Session string
@@ -52,7 +50,7 @@ type Config struct {
 func getConfig(attrs map[string]string) (*Config, error) {
 	scope, ok := attrs[attrScope]
 	if !ok {
-		scope = "buildkit"
+		scope = "buildkit/"
 	}
 
 	bucket, ok := attrs[attrBucket]
@@ -61,11 +59,6 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		if !ok {
 			errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
 		}
-	}
-
-	path, ok := attrs[attrPath]
-	if !ok {
-		path = ""
 	}
 
 	region, ok := attrs[attrRegion]
@@ -93,7 +86,6 @@ func getConfig(attrs map[string]string) (*Config, error) {
 
 	return &Config{
 		Bucket:  bucket,
-		Path:    path,
 		Scope:   scope,
 		Region:  region,
 		Role:    role,
@@ -166,7 +158,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		}
 		diffID = dgst
 
-		key := blobKey(e.config, dgstPair.Descriptor.Digest)
+		key := blobKey(dgstPair.Descriptor.Digest)
 		exists, err := e.cache.exists(key)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to check file presence in cache")
@@ -204,7 +196,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		return nil, err
 	}
 
-	if err := e.cache.saveMutable(indexKey(e.config), string(dt)); err != nil {
+	if err := e.cache.saveMutable(indexKey(), string(dt)); err != nil {
 		return nil, errors.Wrap(err, "error writing index")
 	}
 
@@ -229,13 +221,12 @@ func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
 		if err != nil {
 			return nil, ocispecs.Descriptor{}, err
 		}
-		return &importer{cache, cfg}, ocispecs.Descriptor{}, nil
+		return &importer{cache}, ocispecs.Descriptor{}, nil
 	}
 }
 
 type importer struct {
 	cache *cache
-	config *Config
 }
 
 func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorProviderPair, error) {
@@ -262,12 +253,12 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 	}
 	return &v1.DescriptorProviderPair{
 		Descriptor: desc,
-		Provider:   &s3Provider{i.cache,i.config},
+		Provider:   &s3Provider{i.cache},
 	}, nil
 }
 
 func (i *importer) load() (*v1.CacheChains, error) {
-	b, err := i.cache.get(indexKey(i.config))
+	b, err := i.cache.get(indexKey())
 	if err != nil {
 		return nil, err
 	}
@@ -313,11 +304,10 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 
 type s3Provider struct {
 	cache  *cache
-	config *Config
 }
 
 func (p *s3Provider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
-	b, err := p.cache.get(blobKey(p.config, desc.Digest))
+	b, err := p.cache.get(blobKey(desc.Digest))
 	if err != nil {
 		return nil, err
 	}
@@ -356,12 +346,12 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 	}
 }
 
-func indexKey(cfg *Config) string {
-	return cfg.Path + "index-" + version
+func indexKey() string {
+	return "index-" + version
 }
 
-func blobKey(cfg *Config, dgst digest.Digest) string {
-	return cfg.Path + "buildkit-blob-" + version + "-" + dgst.String()
+func blobKey(dgst digest.Digest) string {
+	return "buildkit-blob-" + version + "-" + dgst.String()
 }
 
 type uploaderInterface interface {
@@ -389,14 +379,18 @@ func newCache(region, role, session, token, scope, bucket string) (*cache, error
 	return &cache{
 		scope:  scope,
 		bucket: bucket,
-
+		
 		client:   client,
 		uploader: s3manager.NewUploaderWithClient(client),
 	}, nil
 }
 
+func (c *cache) buildFullKey(key string) string {
+	return fmt.Sprintf("%s%s", c.scope, key)
+}
+
 func (c *cache) get(key string) (string, error) {
-	key = fmt.Sprintf("%s-%s", c.scope, key)
+	key = c.buildFullKey(key)
 
 	fmt.Printf("Downloading %v %v\n", c.bucket, key)
 	input := &s3.GetObjectInput{
@@ -422,7 +416,7 @@ func (c *cache) get(key string) (string, error) {
 }
 
 func (c *cache) saveMutable(key, value string) error {
-	key = fmt.Sprintf("%s-%s", c.scope, key)
+	key = c.buildFullKey(key)
 
 	fmt.Printf("Uploading %v %v\n", c.bucket, key)	
 
@@ -436,7 +430,7 @@ func (c *cache) saveMutable(key, value string) error {
 }
 
 func (c *cache) exists(key string) (bool, error) {
-	key = fmt.Sprintf("%s-%s", c.scope, key)
+	key = c.buildFullKey(key)
 
 	fmt.Printf("Testing %v %v\n", c.bucket, key)	
 
