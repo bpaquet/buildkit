@@ -110,6 +110,7 @@ type exporter struct {
 	solver.CacheExporterTarget
 	chains *v1.CacheChains
 	cache  *cache
+	config *Config
 }
 
 func NewExporter(cfg *Config) (remotecache.Exporter, error) {
@@ -125,11 +126,15 @@ func NewExporter(cfg *Config) (remotecache.Exporter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &exporter{CacheExporterTarget: cc, chains: cc, cache: cache}, nil
+	return &exporter{CacheExporterTarget: cc, chains: cc, cache: cache, config: cfg}, nil
+}
+
+func (e *exporter) Config() remotecache.Config {
+	return remotecache.Config{}
 }
 
 func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
-	config, descs, err := e.chains.Marshal()
+	config, descs, err := e.chains.Marshal(ctx)
 	if err != nil {
 		return nil, err
 	}
