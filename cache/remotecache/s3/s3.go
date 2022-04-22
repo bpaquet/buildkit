@@ -303,7 +303,7 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 }
 
 type s3Provider struct {
-	cache  *cache
+	cache *cache
 }
 
 func (p *s3Provider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
@@ -379,7 +379,7 @@ func newCache(region, role, session, token, scope, bucket string) (*cache, error
 	return &cache{
 		scope:  scope,
 		bucket: bucket,
-		
+
 		client:   client,
 		uploader: s3manager.NewUploaderWithClient(client),
 	}, nil
@@ -418,7 +418,7 @@ func (c *cache) get(key string) (string, error) {
 func (c *cache) saveMutable(key, value string) error {
 	key = c.buildFullKey(key)
 
-	fmt.Printf("Uploading %v %v\n", c.bucket, key)	
+	fmt.Printf("Uploading %v %v\n", c.bucket, key)
 
 	input := &s3manager.UploadInput{
 		Bucket: aws.String(c.bucket),
@@ -432,7 +432,7 @@ func (c *cache) saveMutable(key, value string) error {
 func (c *cache) exists(key string) (bool, error) {
 	key = c.buildFullKey(key)
 
-	fmt.Printf("Testing %v %v\n", c.bucket, key)	
+	fmt.Printf("Testing %v %v\n", c.bucket, key)
 
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(c.bucket),
