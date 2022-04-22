@@ -384,7 +384,11 @@ func init() {
 		Enabled: true,
 		Status:  apicaps.CapStatusExperimental,
 	})
-<<<<<<< HEAD
+	Caps.Init(apicaps.Cap{
+		ID:      CapRemoteCacheS3,
+		Enabled: true,
+		Status:  apicaps.CapStatusExperimental,
+	})
 	Caps.Init(apicaps.Cap{
 		ID:      CapMergeOp,
 		Enabled: true,
@@ -392,11 +396,6 @@ func init() {
 	})
 	Caps.Init(apicaps.Cap{
 		ID:      CapDiffOp,
-=======
-
-	Caps.Init(apicaps.Cap{
-		ID:      CapRemoteCacheS3,
->>>>>>> 54cd6235 (add s3 cache)
 		Enabled: true,
 		Status:  apicaps.CapStatusExperimental,
 	})
