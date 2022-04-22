@@ -30,6 +30,7 @@ import (
 
 const (
 	attrBucket  = "bucket"
+	attrPath    = "path"
 	attrRegion  = "region"
 	attrRole    = "role"
 	attrSession = "session"
@@ -41,6 +42,7 @@ const (
 type Config struct {
 	Scope   string
 	Bucket  string
+	Path    string
 	Region  string
 	Role    string
 	Session string
@@ -59,6 +61,11 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		if !ok {
 			errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
 		}
+	}
+
+	path, ok := attrs[attrPath]
+	if !ok {
+		path = ""
 	}
 
 	region, ok := attrs[attrRegion]
@@ -86,6 +93,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 
 	return &Config{
 		Bucket:  bucket,
+		Path:    path,
 		Scope:   scope,
 		Region:  region,
 		Role:    role,
@@ -158,16 +166,23 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		}
 		diffID = dgst
 
-		layerDone := oneOffProgress(ctx, fmt.Sprintf("writing layer %s", l.Blob))
-		bytes, err := content.ReadBlob(ctx, dgstPair.Provider, dgstPair.Descriptor)
+		key := blobKey(e.config, dgstPair.Descriptor.Digest)
+		exists, err := e.cache.exists(key)
 		if err != nil {
-			return nil, layerDone(err)
+			return nil, errors.Wrapf(err, "failed to check file presence in cache")
 		}
-		if err := e.cache.save(blobKey(dgstPair.Descriptor.Digest), string(bytes)); err != nil {
-			return nil, layerDone(errors.Wrap(err, "error writing layer blob"))
-		}
+		if !exists {
+			layerDone := oneOffProgress(ctx, fmt.Sprintf("writing layer %s", l.Blob))
+			bytes, err := content.ReadBlob(ctx, dgstPair.Provider, dgstPair.Descriptor)
+			if err != nil {
+				return nil, layerDone(err)
+			}
+			if err := e.cache.saveMutable(key, string(bytes)); err != nil {
+				return nil, layerDone(errors.Wrap(err, "error writing layer blob"))
+			}
 
-		layerDone(nil)
+			layerDone(nil)
+		}
 
 		la := &v1.LayerAnnotations{
 			DiffID:    diffID,
@@ -189,7 +204,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		return nil, err
 	}
 
-	if err := e.cache.saveMutable(indexKey(), string(dt)); err != nil {
+	if err := e.cache.saveMutable(indexKey(e.config), string(dt)); err != nil {
 		return nil, errors.Wrap(err, "error writing index")
 	}
 
@@ -214,12 +229,13 @@ func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
 		if err != nil {
 			return nil, ocispecs.Descriptor{}, err
 		}
-		return &importer{cache}, ocispecs.Descriptor{}, nil
+		return &importer{cache, cfg}, ocispecs.Descriptor{}, nil
 	}
 }
 
 type importer struct {
 	cache *cache
+	config *Config
 }
 
 func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorProviderPair, error) {
@@ -246,12 +262,12 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 	}
 	return &v1.DescriptorProviderPair{
 		Descriptor: desc,
-		Provider:   &s3Provider{i.cache},
+		Provider:   &s3Provider{i.cache,i.config},
 	}, nil
 }
 
 func (i *importer) load() (*v1.CacheChains, error) {
-	b, err := i.cache.get(indexKey())
+	b, err := i.cache.get(indexKey(i.config))
 	if err != nil {
 		return nil, err
 	}
@@ -296,11 +312,12 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 }
 
 type s3Provider struct {
-	cache *cache
+	cache  *cache
+	config *Config
 }
 
 func (p *s3Provider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
-	b, err := p.cache.get(blobKey(desc.Digest))
+	b, err := p.cache.get(blobKey(p.config, desc.Digest))
 	if err != nil {
 		return nil, err
 	}
@@ -339,12 +356,12 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 	}
 }
 
-func indexKey() string {
-	return "index-" + version
+func indexKey(cfg *Config) string {
+	return cfg.Path + "index-" + version
 }
 
-func blobKey(dgst digest.Digest) string {
-	return "buildkit-blob-" + version + "-" + dgst.String()
+func blobKey(cfg *Config, dgst digest.Digest) string {
+	return cfg.Path + "buildkit-blob-" + version + "-" + dgst.String()
 }
 
 type uploaderInterface interface {
@@ -381,6 +398,7 @@ func newCache(region, role, session, token, scope, bucket string) (*cache, error
 func (c *cache) get(key string) (string, error) {
 	key = fmt.Sprintf("%s-%s", c.scope, key)
 
+	fmt.Printf("Downloading %v %v\n", c.bucket, key)
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
@@ -406,6 +424,8 @@ func (c *cache) get(key string) (string, error) {
 func (c *cache) saveMutable(key, value string) error {
 	key = fmt.Sprintf("%s-%s", c.scope, key)
 
+	fmt.Printf("Uploading %v %v\n", c.bucket, key)	
+
 	input := &s3manager.UploadInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
@@ -415,7 +435,11 @@ func (c *cache) saveMutable(key, value string) error {
 	return err
 }
 
-func (c *cache) save(key, value string) error {
+func (c *cache) exists(key string) (bool, error) {
+	key = fmt.Sprintf("%s-%s", c.scope, key)
+
+	fmt.Printf("Testing %v %v\n", c.bucket, key)	
+
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
@@ -424,13 +448,12 @@ func (c *cache) save(key, value string) error {
 	_, err := c.client.HeadObject(input)
 	if err != nil {
 		if isNotFound(err) {
-			c.saveMutable(key, value)
+			return false, nil
 		} else {
-			return err
+			return false, err
 		}
 	}
-
-	return nil
+	return true, nil
 }
 
 func newClient(region, role, sessionName, token string) (*s3.S3, error) {
