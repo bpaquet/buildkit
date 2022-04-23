@@ -29,30 +29,30 @@ import (
 )
 
 const (
-	attrBucket  = "bucket"
-	attrRegion  = "region"
-	attrRole    = "role"
-	attrSession = "session"
-	attrToken   = "token"
-	attrScope   = "scope"
-	version     = "1"
+	attrBucket          = "bucket"
+	attrRegion          = "region"
+	attrRole            = "role"
+	attrSession         = "session"
+	attrToken           = "token"
+	attrPrefix          = "prefix"
+	attrManifestsPrefix = "manifests_prefix"
+	attrBlobsPrefix     = "blobs_prefix"
+	attrName            = "name"
 )
 
 type Config struct {
-	Scope   string
-	Bucket  string
-	Region  string
-	Role    string
-	Session string
-	Token   string
+	Bucket          string
+	Region          string
+	Role            string
+	Session         string
+	Token           string
+	Prefix          string
+	ManifestsPrefix string
+	BlobsPrefix     string
+	Name            string
 }
 
 func getConfig(attrs map[string]string) (*Config, error) {
-	scope, ok := attrs[attrScope]
-	if !ok {
-		scope = "buildkit/"
-	}
-
 	bucket, ok := attrs[attrBucket]
 	if !ok {
 		bucket, ok = os.LookupEnv("AWS_BUCKET")
@@ -84,25 +84,48 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		token = os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
 	}
 
+	prefix, ok := attrs[attrPrefix]
+	if !ok {
+		prefix = ""
+	}
+
+	manifests_prefix, ok := attrs[attrManifestsPrefix]
+	if !ok {
+		manifests_prefix = "manifests/"
+	}
+
+	blobs_prefix, ok := attrs[attrBlobsPrefix]
+	if !ok {
+		blobs_prefix = "blobs/"
+	}
+
+	name, ok := attrs[attrName]
+	if !ok {
+		name = "buildkit"
+	}
+
 	return &Config{
-		Bucket:  bucket,
-		Scope:   scope,
-		Region:  region,
-		Role:    role,
-		Session: session,
-		Token:   token,
+		Bucket:          bucket,
+		Region:          region,
+		Role:            role,
+		Session:         session,
+		Token:           token,
+		Prefix:          prefix,
+		ManifestsPrefix: manifests_prefix,
+		BlobsPrefix:     blobs_prefix,
+		Name:            name,
 	}, nil
 }
 
 // ResolveCacheExporterFunc for s3 cache exporter.
 func ResolveCacheExporterFunc() remotecache.ResolveCacheExporterFunc {
 	return func(ctx context.Context, g session.Group, attrs map[string]string) (remotecache.Exporter, error) {
-		cfg, err := getConfig(attrs)
+		config, err := getConfig(attrs)
 		if err != nil {
 			return nil, err
 		}
 
-		return NewExporter(cfg)
+		return NewExporter(config)
 	}
 }
 
@@ -113,20 +136,13 @@ type exporter struct {
 	config *Config
 }
 
-func NewExporter(cfg *Config) (remotecache.Exporter, error) {
+func NewExporter(config *Config) (remotecache.Exporter, error) {
 	cc := v1.NewCacheChains()
-	cache, err := newCache(
-		cfg.Region,
-		cfg.Role,
-		cfg.Session,
-		cfg.Token,
-		cfg.Scope,
-		cfg.Bucket,
-	)
+	cache, err := newCache(config)
 	if err != nil {
 		return nil, err
 	}
-	return &exporter{CacheExporterTarget: cc, chains: cc, cache: cache, config: cfg}, nil
+	return &exporter{CacheExporterTarget: cc, chains: cc, cache: cache, config: config}, nil
 }
 
 func (e *exporter) Config() remotecache.Config {
@@ -134,12 +150,12 @@ func (e *exporter) Config() remotecache.Config {
 }
 
 func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
-	config, descs, err := e.chains.Marshal(ctx)
+	cacheConfig, descs, err := e.chains.Marshal(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	for i, l := range config.Layers {
+	for i, l := range cacheConfig.Layers {
 		dgstPair, ok := descs[l.Blob]
 		if !ok {
 			return nil, errors.Errorf("missing blob %s", l.Blob)
@@ -158,7 +174,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		}
 		diffID = dgst
 
-		key := blobKey(dgstPair.Descriptor.Digest)
+		key := blobKey(e.config, dgstPair.Descriptor.Digest)
 		exists, err := e.cache.exists(key)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to check file presence in cache")
@@ -188,16 +204,16 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 			}
 			la.CreatedAt = t.UTC()
 		}
-		config.Layers[i].Annotations = la
+		cacheConfig.Layers[i].Annotations = la
 	}
 
-	dt, err := json.Marshal(config)
+	dt, err := json.Marshal(cacheConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.cache.saveMutable(indexKey(), string(dt)); err != nil {
-		return nil, errors.Wrap(err, "error writing index")
+	if err := e.cache.saveMutable(manifestKey(e.config), string(dt)); err != nil {
+		return nil, errors.Wrap(err, "error writing manifest")
 	}
 
 	return nil, nil
@@ -206,27 +222,21 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 // ResolveCacheImporterFunc for s3 cache importer.
 func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
 	return func(ctx context.Context, g session.Group, attrs map[string]string) (remotecache.Importer, ocispecs.Descriptor, error) {
-		cfg, err := getConfig(attrs)
+		config, err := getConfig(attrs)
 		if err != nil {
 			return nil, ocispecs.Descriptor{}, err
 		}
-		cache, err := newCache(
-			cfg.Region,
-			cfg.Role,
-			cfg.Session,
-			cfg.Token,
-			cfg.Scope,
-			cfg.Bucket,
-		)
+		cache, err := newCache(config)
 		if err != nil {
 			return nil, ocispecs.Descriptor{}, err
 		}
-		return &importer{cache}, ocispecs.Descriptor{}, nil
+		return &importer{cache, config}, ocispecs.Descriptor{}, nil
 	}
 }
 
 type importer struct {
-	cache *cache
+	cache  *cache
+	config *Config
 }
 
 func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorProviderPair, error) {
@@ -253,12 +263,12 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 	}
 	return &v1.DescriptorProviderPair{
 		Descriptor: desc,
-		Provider:   &s3Provider{i.cache},
+		Provider:   &s3Provider{i.cache, i.config},
 	}, nil
 }
 
 func (i *importer) load() (*v1.CacheChains, error) {
-	b, err := i.cache.get(indexKey())
+	b, err := i.cache.get(manifestKey(i.config))
 	if err != nil {
 		return nil, err
 	}
@@ -303,11 +313,12 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 }
 
 type s3Provider struct {
-	cache *cache
+	cache  *cache
+	config *Config
 }
 
 func (p *s3Provider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
-	b, err := p.cache.get(blobKey(desc.Digest))
+	b, err := p.cache.get(blobKey(p.config, desc.Digest))
 	if err != nil {
 		return nil, err
 	}
@@ -346,12 +357,12 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 	}
 }
 
-func indexKey() string {
-	return "index-" + version
+func manifestKey(config *Config) string {
+	return config.Prefix + config.ManifestsPrefix + config.Name
 }
 
-func blobKey(dgst digest.Digest) string {
-	return "buildkit-blob-" + version + "-" + dgst.String()
+func blobKey(config *Config, dgst digest.Digest) string {
+	return config.Prefix + config.BlobsPrefix + dgst.String()
 }
 
 type uploaderInterface interface {
@@ -364,37 +375,29 @@ type s3Interface interface {
 }
 
 type cache struct {
-	scope  string
-	bucket string
+	config *Config
 
 	client   s3Interface
 	uploader uploaderInterface
 }
 
-func newCache(region, role, session, token, scope, bucket string) (*cache, error) {
-	client, err := newClient(region, role, session, token)
+func newCache(config *Config) (*cache, error) {
+	client, err := newClient(config.Region, config.Role, config.Session, config.Token)
 	if err != nil {
 		return nil, err
 	}
 	return &cache{
-		scope:  scope,
-		bucket: bucket,
+		config: config,
 
 		client:   client,
 		uploader: s3manager.NewUploaderWithClient(client),
 	}, nil
 }
 
-func (c *cache) buildFullKey(key string) string {
-	return fmt.Sprintf("%s%s", c.scope, key)
-}
-
 func (c *cache) get(key string) (string, error) {
-	key = c.buildFullKey(key)
-
-	fmt.Printf("Downloading %v %v\n", c.bucket, key)
+	fmt.Printf("Downloading %v %v\n", c.config.Bucket, key)
 	input := &s3.GetObjectInput{
-		Bucket: aws.String(c.bucket),
+		Bucket: aws.String(c.config.Bucket),
 		Key:    aws.String(key),
 	}
 
@@ -416,12 +419,10 @@ func (c *cache) get(key string) (string, error) {
 }
 
 func (c *cache) saveMutable(key, value string) error {
-	key = c.buildFullKey(key)
-
-	fmt.Printf("Uploading %v %v\n", c.bucket, key)
+	fmt.Printf("Uploading %v %v\n", c.config.Bucket, key)
 
 	input := &s3manager.UploadInput{
-		Bucket: aws.String(c.bucket),
+		Bucket: aws.String(c.config.Bucket),
 		Key:    aws.String(key),
 		Body:   strings.NewReader(value),
 	}
@@ -430,12 +431,10 @@ func (c *cache) saveMutable(key, value string) error {
 }
 
 func (c *cache) exists(key string) (bool, error) {
-	key = c.buildFullKey(key)
-
-	fmt.Printf("Testing %v %v\n", c.bucket, key)
+	fmt.Printf("Testing %v %v\n", c.config.Bucket, key)
 
 	input := &s3.HeadObjectInput{
-		Bucket: aws.String(c.bucket),
+		Bucket: aws.String(c.config.Bucket),
 		Key:    aws.String(key),
 	}
 
