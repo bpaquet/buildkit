@@ -365,20 +365,12 @@ func blobKey(config *Config, dgst digest.Digest) string {
 	return config.Prefix + config.BlobsPrefix + dgst.String()
 }
 
-type uploaderInterface interface {
-	Upload(input *s3manager.UploadInput, opts ...func(*s3manager.Uploader)) (*s3manager.UploadOutput, error)
-}
-
-type s3Interface interface {
-	GetObject(input *s3.GetObjectInput) (*s3.GetObjectOutput, error)
-	HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error)
-}
-
 type cache struct {
 	config *Config
 
-	client   s3Interface
-	uploader uploaderInterface
+	client     *s3.S3
+	uploader   *s3manager.Uploader
+	downloader *s3manager.Downloader
 }
 
 func newCache(config *Config) (*cache, error) {
@@ -389,13 +381,15 @@ func newCache(config *Config) (*cache, error) {
 	return &cache{
 		config: config,
 
-		client:   client,
-		uploader: s3manager.NewUploaderWithClient(client),
+		client:     client,
+		uploader:   s3manager.NewUploaderWithClient(client),
+		downloader: s3manager.NewDownloaderWithClient(client),
 	}, nil
 }
 
 func (c *cache) get(key string) (string, error) {
-	fmt.Printf("Downloading %v %v\n", c.config.Bucket, key)
+	fmt.Printf("Start downloading s3://%s/%s\n", c.config.Bucket, key)
+	start := time.Now()
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(c.config.Bucket),
 		Key:    aws.String(key),
@@ -409,29 +403,32 @@ func (c *cache) get(key string) (string, error) {
 		return "", err
 	}
 	defer output.Body.Close()
-
-	b, err := ioutil.ReadAll(output.Body)
+	bytes, err := ioutil.ReadAll(output.Body)
 	if err != nil {
 		return "", err
 	}
-
-	return string(b), nil
+	 elapsed := time.Since(start)
+	 fmt.Printf("Download s3://%s/%s: %s (%d bytes)\n", c.config.Bucket, key, elapsed, len(bytes))
+	return string(bytes), nil
 }
 
 func (c *cache) saveMutable(key, value string) error {
-	fmt.Printf("Uploading %v %v\n", c.config.Bucket, key)
+	fmt.Printf("Start uploading s3://%s/%s\n", c.config.Bucket, key)
 
+	start := time.Now()
 	input := &s3manager.UploadInput{
 		Bucket: aws.String(c.config.Bucket),
 		Key:    aws.String(key),
 		Body:   strings.NewReader(value),
 	}
 	_, err := c.uploader.Upload(input)
+	elapsed := time.Since(start)
+	fmt.Printf("Uploading s3://%s/%s: %s (%d bytes)\n", c.config.Bucket, key, elapsed, len(value))
 	return err
 }
 
 func (c *cache) exists(key string) (bool, error) {
-	fmt.Printf("Testing %v %v\n", c.config.Bucket, key)
+	fmt.Printf("Testing %s %s\n", c.config.Bucket, key)
 
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(c.config.Bucket),
