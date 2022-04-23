@@ -370,7 +370,6 @@ type cache struct {
 
 	client     *s3.S3
 	uploader   *s3manager.Uploader
-	downloader *s3manager.Downloader
 }
 
 func newCache(config *Config) (*cache, error) {
@@ -383,10 +382,10 @@ func newCache(config *Config) (*cache, error) {
 
 		client:     client,
 		uploader:   s3manager.NewUploaderWithClient(client),
-		downloader: s3manager.NewDownloaderWithClient(client),
 	}, nil
 }
 
+// Note. We dont use the s3manager.Downloader here, performance are lower.
 func (c *cache) get(key string) (string, error) {
 	fmt.Printf("Start downloading s3://%s/%s\n", c.config.Bucket, key)
 	start := time.Now()
@@ -407,8 +406,9 @@ func (c *cache) get(key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	 elapsed := time.Since(start)
-	 fmt.Printf("Download s3://%s/%s: %s (%d bytes)\n", c.config.Bucket, key, elapsed, len(bytes))
+
+	elapsed := time.Since(start)
+	fmt.Printf("Download s3://%s/%s: %s (%d bytes)\n", c.config.Bucket, key, elapsed, len(bytes))
 	return string(bytes), nil
 }
 
