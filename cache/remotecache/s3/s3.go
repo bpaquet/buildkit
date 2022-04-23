@@ -368,8 +368,8 @@ func blobKey(config *Config, dgst digest.Digest) string {
 type cache struct {
 	config *Config
 
-	client     *s3.S3
-	uploader   *s3manager.Uploader
+	client   *s3.S3
+	uploader *s3manager.Uploader
 }
 
 func newCache(config *Config) (*cache, error) {
@@ -380,8 +380,8 @@ func newCache(config *Config) (*cache, error) {
 	return &cache{
 		config: config,
 
-		client:     client,
-		uploader:   s3manager.NewUploaderWithClient(client),
+		client:   client,
+		uploader: s3manager.NewUploaderWithClient(client),
 	}, nil
 }
 
