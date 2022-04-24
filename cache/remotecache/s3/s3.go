@@ -38,6 +38,7 @@ const (
 	attrManifestsPrefix = "manifests_prefix"
 	attrBlobsPrefix     = "blobs_prefix"
 	attrName            = "name"
+	attrTouchRefresh    = "touch_refresh"
 )
 
 type Config struct {
@@ -50,6 +51,7 @@ type Config struct {
 	ManifestsPrefix string
 	BlobsPrefix     string
 	Name            string
+	TouchRefresh    time.Duration
 }
 
 func getConfig(attrs map[string]string) (*Config, error) {
@@ -89,19 +91,29 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		prefix = ""
 	}
 
-	manifests_prefix, ok := attrs[attrManifestsPrefix]
+	manifestsPrefix, ok := attrs[attrManifestsPrefix]
 	if !ok {
-		manifests_prefix = "manifests/"
+		manifestsPrefix = "manifests/"
 	}
 
-	blobs_prefix, ok := attrs[attrBlobsPrefix]
+	blobsPrefix, ok := attrs[attrBlobsPrefix]
 	if !ok {
-		blobs_prefix = "blobs/"
+		blobsPrefix = "blobs/"
 	}
 
 	name, ok := attrs[attrName]
 	if !ok {
 		name = "buildkit"
+	}
+
+	touchRefresh, _ := time.ParseDuration("24h")
+
+	touchRefreshStr, ok := attrs[attrTouchRefresh]
+	if ok {
+		touchRefreshFromUser, err := time.ParseDuration(touchRefreshStr)
+		if err == nil {
+			touchRefresh = touchRefreshFromUser
+		}
 	}
 
 	return &Config{
@@ -111,9 +123,10 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		Session:         session,
 		Token:           token,
 		Prefix:          prefix,
-		ManifestsPrefix: manifests_prefix,
-		BlobsPrefix:     blobs_prefix,
+		ManifestsPrefix: manifestsPrefix,
+		BlobsPrefix:     blobsPrefix,
 		Name:            name,
+		TouchRefresh:    touchRefresh,
 	}, nil
 }
 
@@ -179,7 +192,14 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to check file presence in cache")
 		}
-		if !exists {
+		if exists != nil {
+			if time.Since(*exists) > e.config.TouchRefresh {
+				err = e.cache.touch(key)
+				if err != nil {
+					return nil, errors.Wrapf(err, "failed to touch file")
+				}
+			}
+		} else {
 			layerDone := oneOffProgress(ctx, fmt.Sprintf("writing layer %s", l.Blob))
 			bytes, err := content.ReadBlob(ctx, dgstPair.Provider, dgstPair.Descriptor)
 			if err != nil {
@@ -385,7 +405,7 @@ func newCache(config *Config) (*cache, error) {
 	}, nil
 }
 
-// Note. We dont use the s3manager.Downloader here, performance are lower.
+// Note: We dont use the s3manager.Downloader here, performance are lower.
 func (c *cache) get(key string) (string, error) {
 	fmt.Printf("Start downloading s3://%s/%s\n", c.config.Bucket, key)
 	start := time.Now()
@@ -427,7 +447,7 @@ func (c *cache) saveMutable(key, value string) error {
 	return err
 }
 
-func (c *cache) exists(key string) (bool, error) {
+func (c *cache) exists(key string) (*time.Time, error) {
 	fmt.Printf("Testing %s %s\n", c.config.Bucket, key)
 
 	input := &s3.HeadObjectInput{
@@ -435,15 +455,33 @@ func (c *cache) exists(key string) (bool, error) {
 		Key:    aws.String(key),
 	}
 
-	_, err := c.client.HeadObject(input)
+	head, err := c.client.HeadObject(input)
 	if err != nil {
 		if isNotFound(err) {
-			return false, nil
+			return nil, nil
 		} else {
-			return false, err
+			return nil, err
 		}
 	}
-	return true, nil
+	return head.LastModified, nil
+}
+
+func (c *cache) touch(key string) error {
+	fmt.Printf("Touch s3://%s/%s\n", c.config.Bucket, key)
+
+	start := time.Now()
+
+	copy := &s3.CopyObjectInput{
+		Bucket:     aws.String(c.config.Bucket),
+		CopySource: aws.String(fmt.Sprintf("%s/%s", c.config.Bucket, key)),
+		Key:        aws.String(key),
+	}
+
+	_, err := c.client.CopyObject(copy)
+
+	elapsed := time.Since(start)
+	fmt.Printf("Uploading s3://%s/%s: %s\n", c.config.Bucket, key, elapsed)
+	return err
 }
 
 func newClient(region, role, sessionName, token string) (*s3.S3, error) {

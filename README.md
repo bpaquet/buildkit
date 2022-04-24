@@ -437,6 +437,10 @@ The following attributes are required:
 * `bucket`: AWS S3 bucket (default `$AWS_BUCKET`)
 * `region`: AWS region (default `$AWS_REGION`)
 
+Storage locations:
+* blobs: `s3://<bucket>/<prefix><blobs_prefix>/<sha256>`, default: `s3://<bucket>/blobs/<sha256>`
+* manifests: `s3://<bucket><prefix><manifests_prefix>/<name>`, default: `s3://<bucket>/manifests/<name>`
+
 The following attributes are required and will be automatically set when using [iam-roles-for-service-accounts](https://github.com/awsdocs/amazon-eks-user-guide/blob/master/doc_source/iam-roles-for-service-accounts-technical-overview.md).
 * `role`: AWS role (default `$AWS_ROLE_ARN`)
 * `session`: AWS assume role session name (default `$AWS_ROLE_SESSION_NAME`)
