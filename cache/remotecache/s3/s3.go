@@ -246,9 +246,11 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		return nil, errors.Wrapf(err, "error writing manifest: %s", e.config.Name)
 	}
 
-	for _, name := range e.config.Duplicates {
-		if err := e.cache.saveMutable(manifestKey(e.config, name), string(dt)); err != nil {
-			return nil, errors.Wrapf(err, "error writing manifest: %s", name)
+	if len(e.config.Duplicates) > 0 {
+		for _, name := range e.config.Duplicates {
+			if err := e.cache.saveMutable(manifestKey(e.config, name), string(dt)); err != nil {
+				return nil, errors.Wrapf(err, "error writing manifest: %s", name)
+			}
 		}
 	}
 	return nil, nil
