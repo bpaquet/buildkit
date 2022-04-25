@@ -122,11 +122,8 @@ func getConfig(attrs map[string]string) (*Config, error) {
 	if !ok {
 		duplicatesStr = ""
 	}
-	
+
 	duplicates := strings.Split(duplicatesStr, ";")
-
-	fmt.Printf("duplicatesStr %v, duplicates %v\n", duplicatesStr, duplicates)
-
 
 	return &Config{
 		Bucket:          bucket,
