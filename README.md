@@ -450,10 +450,12 @@ The following attributes are required and will be automatically set when using [
 * `type=s3`
 * `mode=min` (default): only export layers for the resulting image
 * `mode=max`: export all the layers of all intermediate steps.
-* `prefix=`: global prefix to store / read files on s3. Default: empty
-* `blobs_prefix=`: global prefix to store / read blobs on s3. (default: `blobs/`)
-* `manifests_prefix=`: global prefix to store / read blobs on s3. (default: `manifests/`)
+* `prefix`: global prefix to store / read files on s3. Default: empty
+* `blobs_prefix`: global prefix to store / read blobs on s3. (default: `blobs/`)
+* `manifests_prefix`: global prefix to store / read blobs on s3. (default: `manifests/`)
 * `name=buildkit`: name of the manifest to use (default `buildkit`)
+* `duplicates`: list of names on which we want to duplicate the manifest, separated by `;`. The standard use case is to use the
+  git sha1 as name, and the branch name as duplicate, and load both in `import-cache`
 
 `--import-cache` options:
 * `type=s3`
