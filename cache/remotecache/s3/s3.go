@@ -38,6 +38,7 @@ const (
 	attrManifestsPrefix = "manifests_prefix"
 	attrBlobsPrefix     = "blobs_prefix"
 	attrName            = "name"
+	attrDuplicates      = "duplicates"
 	attrTouchRefresh    = "touch_refresh"
 )
 
@@ -51,6 +52,7 @@ type Config struct {
 	ManifestsPrefix string
 	BlobsPrefix     string
 	Name            string
+	Duplicates      []string
 	TouchRefresh    time.Duration
 }
 
@@ -116,6 +118,13 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
+	duplicatesStr, ok := attrs[attrDuplicates]
+	if ok {
+		duplicatesStr = ""
+	}
+	duplicates := strings.Split(duplicatesStr, ";")
+
+
 	return &Config{
 		Bucket:          bucket,
 		Region:          region,
@@ -126,6 +135,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		ManifestsPrefix: manifestsPrefix,
 		BlobsPrefix:     blobsPrefix,
 		Name:            name,
+		Duplicates:			 duplicates,
 		TouchRefresh:    touchRefresh,
 	}, nil
 }
@@ -232,10 +242,15 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		return nil, err
 	}
 
-	if err := e.cache.saveMutable(manifestKey(e.config), string(dt)); err != nil {
-		return nil, errors.Wrap(err, "error writing manifest")
+	if err := e.cache.saveMutable(manifestKey(e.config, e.config.Name), string(dt)); err != nil {
+		return nil, errors.Wrapf(err, "error writing manifest: %s", e.config.Name)
 	}
 
+	for _, name := range e.config.Duplicates {
+		if err := e.cache.saveMutable(manifestKey(e.config, name), string(dt)); err != nil {
+			return nil, errors.Wrapf(err, "error writing manifest: %s", name)
+		}
+	}
 	return nil, nil
 }
 
@@ -288,7 +303,7 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 }
 
 func (i *importer) load() (*v1.CacheChains, error) {
-	b, err := i.cache.get(manifestKey(i.config))
+	b, err := i.cache.get(manifestKey(i.config, i.config.Name))
 	if err != nil {
 		return nil, err
 	}
@@ -377,8 +392,8 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 	}
 }
 
-func manifestKey(config *Config) string {
-	return config.Prefix + config.ManifestsPrefix + config.Name
+func manifestKey(config *Config, name string) string {
+	return config.Prefix + config.ManifestsPrefix + name
 }
 
 func blobKey(config *Config, dgst digest.Digest) string {
