@@ -119,9 +119,10 @@ func getConfig(attrs map[string]string) (*Config, error) {
 	}
 
 	duplicatesStr, ok := attrs[attrDuplicates]
-	if ok {
+	if !ok {
 		duplicatesStr = ""
 	}
+	
 	duplicates := strings.Split(duplicatesStr, ";")
 
 	fmt.Printf("duplicatesStr %v, duplicates %v\n", duplicatesStr, duplicates)
