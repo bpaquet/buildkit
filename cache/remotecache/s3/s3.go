@@ -1,11 +1,13 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,31 +31,33 @@ import (
 )
 
 const (
-	attrBucket          = "bucket"
-	attrRegion          = "region"
-	attrRole            = "role"
-	attrSession         = "session"
-	attrToken           = "token"
-	attrPrefix          = "prefix"
-	attrManifestsPrefix = "manifests_prefix"
-	attrBlobsPrefix     = "blobs_prefix"
-	attrName            = "name"
-	attrDuplicates      = "duplicates"
-	attrTouchRefresh    = "touch_refresh"
+	attrBucket           = "bucket"
+	attrRegion           = "region"
+	attrRole             = "role"
+	attrPrefix           = "prefix"
+	attrManifestsPrefix  = "manifests_prefix"
+	attrBlobsPrefix      = "blobs_prefix"
+	attrName             = "name"
+	attrTouchRefresh     = "touch_refresh"
+	attrEndpointURL      = "endpoint_url"
+	attrAccessKeyID      = "access_key_id"
+	attrSecretAccessKey  = "secret_access_key"
+	attrS3ForcePathStyle = "s3_force_path_style"
 )
 
 type Config struct {
-	Bucket          string
-	Region          string
-	Role            string
-	Session         string
-	Token           string
-	Prefix          string
-	ManifestsPrefix string
-	BlobsPrefix     string
-	Name            string
-	Duplicates      []string
-	TouchRefresh    time.Duration
+	Bucket           string
+	Region           string
+	Role             string
+	Prefix           string
+	ManifestsPrefix  string
+	BlobsPrefix      string
+	Names            []string
+	TouchRefresh     time.Duration
+	EndpointURL      string
+	AccessKeyID      string
+	SecretAccessKey  string
+	S3ForcePathStyle bool
 }
 
 func getConfig(attrs map[string]string) (*Config, error) {
@@ -78,16 +82,6 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		role = os.Getenv("AWS_ROLE_ARN")
 	}
 
-	session, ok := attrs[attrSession]
-	if !ok {
-		session = os.Getenv("AWS_ROLE_SESSION_NAME")
-	}
-
-	token, ok := attrs[attrToken]
-	if !ok {
-		token = os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
-	}
-
 	prefix, ok := attrs[attrPrefix]
 	if !ok {
 		prefix = ""
@@ -103,9 +97,13 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		blobsPrefix = "blobs/"
 	}
 
+	names := []string{"buildkit"}
 	name, ok := attrs[attrName]
-	if !ok {
-		name = "buildkit"
+	if ok {
+		splittedNames := strings.Split(name, ";")
+		if len(splittedNames) > 0 {
+			names = splittedNames
+		}
 	}
 
 	touchRefresh, _ := time.ParseDuration("24h")
@@ -118,24 +116,43 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
-	duplicates := make([]string, 0)
-	duplicatesStr, ok := attrs[attrDuplicates]
+	endpointURL, ok := attrs[attrEndpointURL]
+	if !ok {
+		endpointURL = ""
+	}
+
+	accessKeyID, ok := attrs[attrAccessKeyID]
+	if !ok {
+		accessKeyID = ""
+	}
+
+	secretAccessKey, ok := attrs[attrSecretAccessKey]
+	if !ok {
+		secretAccessKey = ""
+	}
+
+	s3ForcePathStyle := false
+	s3ForcePathStyleStr, ok := attrs[attrS3ForcePathStyle]
 	if ok {
-		duplicates = strings.Split(duplicatesStr, ";")
+		s3ForcePathStyleUser, err := strconv.ParseBool(s3ForcePathStyleStr)
+		if err == nil {
+			s3ForcePathStyle = s3ForcePathStyleUser
+		}
 	}
 
 	return &Config{
-		Bucket:          bucket,
-		Region:          region,
-		Role:            role,
-		Session:         session,
-		Token:           token,
-		Prefix:          prefix,
-		ManifestsPrefix: manifestsPrefix,
-		BlobsPrefix:     blobsPrefix,
-		Name:            name,
-		Duplicates:			 duplicates,
-		TouchRefresh:    touchRefresh,
+		Bucket:           bucket,
+		Region:           region,
+		Role:             role,
+		Prefix:           prefix,
+		ManifestsPrefix:  manifestsPrefix,
+		BlobsPrefix:      blobsPrefix,
+		Names:            names,
+		TouchRefresh:     touchRefresh,
+		EndpointURL:      endpointURL,
+		AccessKeyID:      accessKeyID,
+		SecretAccessKey:  secretAccessKey,
+		S3ForcePathStyle: s3ForcePathStyle,
 	}, nil
 }
 
@@ -214,7 +231,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 			if err != nil {
 				return nil, layerDone(err)
 			}
-			if err := e.cache.saveMutable(key, string(bytes)); err != nil {
+			if err := e.cache.saveMutable(key, bytes); err != nil {
 				return nil, layerDone(errors.Wrap(err, "error writing layer blob"))
 			}
 
@@ -241,12 +258,8 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		return nil, err
 	}
 
-	if err := e.cache.saveMutable(manifestKey(e.config, e.config.Name), string(dt)); err != nil {
-		return nil, errors.Wrapf(err, "error writing manifest: %s", e.config.Name)
-	}
-
-	for _, name := range e.config.Duplicates {
-		if err := e.cache.saveMutable(manifestKey(e.config, name), string(dt)); err != nil {
+	for _, name := range e.config.Names {
+		if err := e.cache.saveMutable(manifestKey(e.config, name), dt); err != nil {
 			return nil, errors.Wrapf(err, "error writing manifest: %s", name)
 		}
 	}
@@ -302,16 +315,16 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 }
 
 func (i *importer) load() (*v1.CacheChains, error) {
-	b, err := i.cache.get(manifestKey(i.config, i.config.Name))
+	b, err := i.cache.get(manifestKey(i.config, i.config.Names[0]))
 	if err != nil {
 		return nil, err
 	}
-	if b == "" {
+	if len(b) == 0 {
 		return v1.NewCacheChains(), nil
 	}
 
 	var config v1.CacheConfig
-	if err := json.Unmarshal([]byte(b), &config); err != nil {
+	if err := json.Unmarshal(b, &config); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
@@ -356,10 +369,10 @@ func (p *s3Provider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (co
 	if err != nil {
 		return nil, err
 	}
-	if b == "" {
+	if len(b) == 0 {
 		return nil, errors.Errorf("blob not found")
 	}
-	return &readerAt{strings.NewReader(b), desc.Size}, nil
+	return &readerAt{strings.NewReader(string(b)), desc.Size}, nil
 }
 
 type readerAt struct {
@@ -407,7 +420,7 @@ type cache struct {
 }
 
 func newCache(config *Config) (*cache, error) {
-	client, err := newClient(config.Region, config.Role, config.Session, config.Token)
+	client, err := newClient(config.Region, config.Role, config.EndpointURL, config.AccessKeyID, config.SecretAccessKey, config.S3ForcePathStyle)
 	if err != nil {
 		return nil, err
 	}
@@ -419,8 +432,8 @@ func newCache(config *Config) (*cache, error) {
 	}, nil
 }
 
-// Note: We dont use the s3manager.Downloader here, performance are lower.
-func (c *cache) get(key string) (string, error) {
+// Note: We dont use the s3manager.Downloader here, performances are not better.
+func (c *cache) get(key string) ([]byte, error) {
 	fmt.Printf("Start downloading s3://%s/%s\n", c.config.Bucket, key)
 	start := time.Now()
 	input := &s3.GetObjectInput{
@@ -431,29 +444,29 @@ func (c *cache) get(key string) (string, error) {
 	output, err := c.client.GetObject(input)
 	if err != nil {
 		if isNotFound(err) {
-			return "", nil
+			return make([]byte, 0), nil
 		}
-		return "", err
+		return make([]byte, 0), err
 	}
 	defer output.Body.Close()
 	bytes, err := ioutil.ReadAll(output.Body)
 	if err != nil {
-		return "", err
+		return make([]byte, 0), err
 	}
 
 	elapsed := time.Since(start)
 	fmt.Printf("Download s3://%s/%s: %s (%d bytes)\n", c.config.Bucket, key, elapsed, len(bytes))
-	return string(bytes), nil
+	return bytes, nil
 }
 
-func (c *cache) saveMutable(key, value string) error {
+func (c *cache) saveMutable(key string, value []byte) error {
 	fmt.Printf("Start uploading s3://%s/%s\n", c.config.Bucket, key)
 
 	start := time.Now()
 	input := &s3manager.UploadInput{
 		Bucket: aws.String(c.config.Bucket),
 		Key:    aws.String(key),
-		Body:   strings.NewReader(value),
+		Body:   bytes.NewReader(value),
 	}
 	_, err := c.uploader.Upload(input)
 	elapsed := time.Since(start)
@@ -473,9 +486,8 @@ func (c *cache) exists(key string) (*time.Time, error) {
 	if err != nil {
 		if isNotFound(err) {
 			return nil, nil
-		} else {
-			return nil, err
 		}
+		return nil, err
 	}
 	return head.LastModified, nil
 }
@@ -498,24 +510,23 @@ func (c *cache) touch(key string) error {
 	return err
 }
 
-func newClient(region, role, sessionName, token string) (*s3.S3, error) {
-	s, err := sess.NewSession(&aws.Config{Region: &region})
+func newClient(region, role, endpointURL, accessKeyID, secretAccessKey string, s3ForcePathStyle bool) (*s3.S3, error) {
+	s, err := sess.NewSession(&aws.Config{Region: &region, Endpoint: &endpointURL, S3ForcePathStyle: &s3ForcePathStyle})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %v", err)
 	}
 
-	if role == "" {
-		return s3.New(s), nil
+	if role != "" {
+		creds := stscreds.NewCredentials(s, role)
+		return s3.New(s, &aws.Config{Credentials: creds}), nil
 	}
 
-	var creds *credentials.Credentials
-	if token != "" {
-		creds = stscreds.NewWebIdentityCredentials(s, role, sessionName, token)
-	} else {
-		creds = stscreds.NewCredentials(s, role)
+	if accessKeyID != "" && secretAccessKey != "" {
+		creds := credentials.NewStaticCredentials(accessKeyID, secretAccessKey, "")
+		return s3.New(s, &aws.Config{Credentials: creds}), nil
 	}
 
-	return s3.New(s, &aws.Config{Credentials: creds}), nil
+	return s3.New(s), nil
 }
 
 func isNotFound(err error) bool {

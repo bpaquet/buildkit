@@ -441,21 +441,27 @@ Storage locations:
 * blobs: `s3://<bucket>/<prefix><blobs_prefix>/<sha256>`, default: `s3://<bucket>/blobs/<sha256>`
 * manifests: `s3://<bucket>/<prefix><manifests_prefix>/<name>`, default: `s3://<bucket>/manifests/<name>`
 
-The following attributes are required and will be automatically set when using [iam-roles-for-service-accounts](https://github.com/awsdocs/amazon-eks-user-guide/blob/master/doc_source/iam-roles-for-service-accounts-technical-overview.md).
-* `role`: AWS role (default `$AWS_ROLE_ARN`)
-* `session`: AWS assume role session name (default `$AWS_ROLE_SESSION_NAME`)
-* `token`: AWS web identity token file (default `$AWS_WEB_IDENTITY_TOKEN_FILE`)
+S3 configuration
+* `blobs_prefix`: global prefix to store / read blobs on s3. (default: `blobs/`)
+* `manifests_prefix`: global prefix to store / read blobs on s3. (default: `manifests/`)
+* `endpoint_url`: specify a specific S3 endpoint. (default: ``)
+* `s3_force_path_style`: if set to `true`, put the bucket name in the URL instead of in the hostname. (default: `false`)
+
+AWS Authentication:
+
+The simplest way is to use am IAM Instance profile. In this case, the attribute `role` can be used to override the role.
+Others options are:
+
+* Any system using environement variables / config files supported by the [AWS Go SDK](https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html). The configuration must be available for the buildkit daemon, not for the client.
+* Access key ID and Secret Access Key, using the `access_key_id` and `secret_access_key` attributes.
+
 
 `--export-cache` options:
 * `type=s3`
 * `mode=min` (default): only export layers for the resulting image
 * `mode=max`: export all the layers of all intermediate steps.
 * `prefix`: global prefix to store / read files on s3. Default: empty
-* `blobs_prefix`: global prefix to store / read blobs on s3. (default: `blobs/`)
-* `manifests_prefix`: global prefix to store / read blobs on s3. (default: `manifests/`)
-* `name=buildkit`: name of the manifest to use (default `buildkit`)
-* `duplicates`: list of names on which we want to duplicate the manifest, separated by `;`. The standard use case is to use the
-  git sha1 as name, and the branch name as duplicate, and load both in `import-cache`
+* `name=buildkit`: name of the manifest to use (default `buildkit`). Multiple manifest name can be specified at the same time, separated by `;`. The standard use case is to use the git sha1 as name, and the branch name as duplicate, and load both in `import-cache`
 
 `--import-cache` options:
 * `type=s3`
