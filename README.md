@@ -434,25 +434,25 @@ buildctl build ... \
 ```
 
 The following attributes are required:
-* `bucket`: AWS S3 bucket (default `$AWS_BUCKET`)
-* `region`: AWS region (default `$AWS_REGION`)
+* `bucket`: AWS S3 bucket (default: `$AWS_BUCKET`)
+* `region`: AWS region (default: `$AWS_REGION`)
 
 Storage locations:
 * blobs: `s3://<bucket>/<prefix><blobs_prefix>/<sha256>`, default: `s3://<bucket>/blobs/<sha256>`
 * manifests: `s3://<bucket>/<prefix><manifests_prefix>/<name>`, default: `s3://<bucket>/manifests/<name>`
 
-S3 configuration
+S3 configuration:
 * `blobs_prefix`: global prefix to store / read blobs on s3. (default: `blobs/`)
 * `manifests_prefix`: global prefix to store / read blobs on s3. (default: `manifests/`)
-* `endpoint_url`: specify a specific S3 endpoint. (default: ``)
+* `endpoint_url`: specify a specific S3 endpoint. (default: empty)
 * `s3_force_path_style`: if set to `true`, put the bucket name in the URL instead of in the hostname. (default: `false`)
 
 AWS Authentication:
 
-The simplest way is to use am IAM Instance profile. In this case, the attribute `role` can be used to override the role.
+The simplest way is to use an IAM Instance profile. In this case, the attribute `role` can be used to override the role.
 Others options are:
 
-* Any system using environement variables / config files supported by the [AWS Go SDK](https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html). The configuration must be available for the buildkit daemon, not for the client.
+* Any system using environment variables / config files supported by the [AWS Go SDK](https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html). The configuration must be available for the buildkit daemon, not for the client.
 * Access key ID and Secret Access Key, using the `access_key_id` and `secret_access_key` attributes.
 
 
@@ -461,7 +461,7 @@ Others options are:
 * `mode=min` (default): only export layers for the resulting image
 * `mode=max`: export all the layers of all intermediate steps.
 * `prefix`: global prefix to store / read files on s3. Default: empty
-* `name=buildkit`: name of the manifest to use (default `buildkit`). Multiple manifest name can be specified at the same time, separated by `;`. The standard use case is to use the git sha1 as name, and the branch name as duplicate, and load both in `import-cache`
+* `name=buildkit`: name of the manifest to use (default `buildkit`). Multiple manifest names can be specified at the same time, separated by `;`. The standard use case is to use the git sha1 as name, and the branch name as duplicate, and load both with 2 `import-cache` commands.
 
 `--import-cache` options:
 * `type=s3`
