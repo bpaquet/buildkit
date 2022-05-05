@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -315,17 +315,13 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 }
 
 func (i *importer) load() (*v1.CacheChains, error) {
-	b, err := i.cache.get(manifestKey(i.config, i.config.Names[0]))
+	var config v1.CacheConfig
+	found, err := i.cache.getManifest(manifestKey(i.config, i.config.Names[0]), &config)
 	if err != nil {
 		return nil, err
 	}
-	if len(b) == 0 {
+	if !found {
 		return v1.NewCacheChains(), nil
-	}
-
-	var config v1.CacheConfig
-	if err := json.Unmarshal(b, &config); err != nil {
-		return nil, errors.WithStack(err)
 	}
 
 	allLayers := v1.DescriptorProvider{}
@@ -365,27 +361,19 @@ type s3Provider struct {
 }
 
 func (p *s3Provider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
-	b, err := p.cache.get(blobKey(p.config, desc.Digest))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) == 0 {
-		return nil, errors.Errorf("blob not found")
-	}
-	return &readerAt{strings.NewReader(string(b)), desc.Size}, nil
+	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
+		return p.cache.getReader(blobKey(p.config, desc.Digest))
+	})
+	return &readerAt{ReaderAtCloser: readerAtCloser, desc: desc}, nil
 }
 
 type readerAt struct {
-	*strings.Reader
-	size int64
+	ReaderAtCloser
+	desc ocispecs.Descriptor
 }
 
-func (r readerAt) Size() int64 {
-	return r.size
-}
-
-func (readerAt) Close() error {
-	return nil
+func (r *readerAt) Size() int64 {
+	return r.desc.Size
 }
 
 func oneOffProgress(ctx context.Context, id string) func(err error) error {
@@ -432,8 +420,7 @@ func newCache(config *Config) (*cache, error) {
 	}, nil
 }
 
-// Note: We dont use the s3manager.Downloader here, performances are not better.
-func (c *cache) get(key string) ([]byte, error) {
+func (c *cache) getManifest(key string, config *v1.CacheConfig) (bool, error) {
 	fmt.Printf("Start downloading s3://%s/%s\n", c.config.Bucket, key)
 	start := time.Now()
 	input := &s3.GetObjectInput{
@@ -444,19 +431,35 @@ func (c *cache) get(key string) ([]byte, error) {
 	output, err := c.client.GetObject(input)
 	if err != nil {
 		if isNotFound(err) {
-			return make([]byte, 0), nil
+			return false, nil
 		}
-		return make([]byte, 0), err
+		return false, err
 	}
 	defer output.Body.Close()
-	bytes, err := ioutil.ReadAll(output.Body)
-	if err != nil {
-		return make([]byte, 0), err
+
+	decoder := json.NewDecoder(output.Body)
+	if err := decoder.Decode(config); err != nil {
+		return false, errors.WithStack(err)
 	}
 
 	elapsed := time.Since(start)
-	fmt.Printf("Download s3://%s/%s: %s (%d bytes)\n", c.config.Bucket, key, elapsed, len(bytes))
-	return bytes, nil
+	fmt.Printf("Download s3://%s/%s: %s (%d bytes)\n", c.config.Bucket, key, elapsed, output.ContentLength)
+
+	return true, nil
+}
+
+func (c *cache) getReader(key string) (io.ReadCloser, error) {
+	fmt.Printf("Start downloading with a reader s3://%s/%s\n", c.config.Bucket, key)
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(c.config.Bucket),
+		Key:    aws.String(key),
+	}
+
+	output, err := c.client.GetObject(input)
+	if err != nil {
+		return nil, err
+	}
+	return output.Body, nil
 }
 
 func (c *cache) saveMutable(key string, value []byte) error {
