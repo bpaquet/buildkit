@@ -3,7 +3,7 @@
 /bin/minio server /tmp/data --address=0.0.0.0:9000 --console-address=0.0.0.0:9001 &
 
 while true; do
-  curl -s -f http://127.0.0.1:9001 > /dev/null && break
+  curl -s -f http://127.0.0.1:9001 >/dev/null && break
   sleep 1
 done
 
@@ -14,7 +14,7 @@ mc admin trace myminio &
 
 buildkitd -debugaddr 0.0.0.0:8060 &
 while true; do
-  curl -s -f http://127.0.0.1:8060/debug/pprof/ > /dev/null && break
+  curl -s -f http://127.0.0.1:8060/debug/pprof/ >/dev/null && break
   sleep 1
 done
 
@@ -54,7 +54,7 @@ buildctl build \
   --local context=/test/test2 \
   --local dockerfile=/test/test2 \
   --import-cache "type=s3,bucket=my-bucket,name=bar,region=us-east-1,endpoint_url=http://127.0.0.1:9000,access_key_id=minioadmin,secret_access_key=minioadmin,s3_force_path_style=true" \
-  2>&1 | tee /tmp/log
-cat /tmp/log | grep 'failed to copy: NoSuchKey'
+  >/tmp/log 2>&1 || true
+cat /tmp/log | grep 'failed to copy: NoSuchKey' >/dev/null
 
 echo S3 Checks ok
