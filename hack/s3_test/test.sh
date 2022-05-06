@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/sh -ex
 
 /bin/minio server /tmp/data --console-address=0.0.0.0:9001 &
 sleep 1
@@ -50,4 +50,3 @@ buildctl build \
 cat /tmp/log | grep 'failed to copy: NoSuchKey'
 
 echo S3 Checks ok
-

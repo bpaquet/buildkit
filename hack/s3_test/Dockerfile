@@ -1,3 +1,5 @@
+FROM moby/buildkit AS buildkit
+
 FROM debian:bullseye-slim
 
 RUN apt-get update \
@@ -5,13 +7,13 @@ RUN apt-get update \
 
 RUN mkdir /test
 
-RUN wget -q https://dl.min.io/server/minio/release/linux-amd64/minio \
-  && wget -q https://dl.min.io/client/mc/release/linux-amd64/mc \
+ARG TARGETOS TARGETARCH
+RUN wget -q https://dl.min.io/server/minio/release/${TARGETOS}-${TARGETARCH}/minio \
+  && wget -q https://dl.min.io/client/mc/release/${TARGETOS}-${TARGETARCH}/mc \
   && chmod +x minio mc \
   && mv minio mc /bin
 
-COPY hack/s3_test/ /test
 
-COPY bin/buildkitd bin/buildctl /bin
+COPY --from=buildkit /usr/bin/buildkitd /usr/bin/buildctl /bin
 
-RUN chmod +x /test/test.sh /bin/buildkitd
+COPY . /test

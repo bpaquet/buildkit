@@ -1,10 +1,7 @@
-#!/bin/sh -e
+#!/bin/sh -ex
 
-mv .dockerignore .dockerignore.s3_test
-function finish {
-  mv .dockerignore.s3_test .dockerignore
-}
-trap finish EXIT
+cd "$(dirname "$0")"
 
-docker build -f hack/s3_test/Dockerfile . -t s3_test
-docker run --rm -ti --privileged -p 9001:9001 -p 8060:8060 s3_test  /test/test.sh
+docker buildx bake --load
+docker run --rm -ti --privileged -p 9001:9001 -p 8060:8060 moby/buildkit:s3test /test/test.sh
+docker rmi moby/buildkit:s3test
