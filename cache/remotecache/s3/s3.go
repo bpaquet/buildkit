@@ -305,15 +305,14 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 		}
 		annotations["buildkit/createdat"] = string(txt)
 	}
-	desc := ocispecs.Descriptor{
-		MediaType:   l.Annotations.MediaType,
-		Digest:      l.Blob,
-		Size:        l.Annotations.Size,
-		Annotations: annotations,
-	}
 	return &v1.DescriptorProviderPair{
-		Descriptor: desc,
-		Provider:   &s3LayerProvider{i.s3Client, i.config},
+		Provider: &s3LayerProvider{i.s3Client, i.config},
+		Descriptor: ocispecs.Descriptor{
+			MediaType:   l.Annotations.MediaType,
+			Digest:      l.Blob,
+			Size:        l.Annotations.Size,
+			Annotations: annotations,
+		},
 	}, nil
 }
 
