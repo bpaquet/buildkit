@@ -332,11 +332,11 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 
 type readerAt struct {
 	ReaderAtCloser
-	desc ocispecs.Descriptor
+	size int64
 }
 
 func (r *readerAt) Size() int64 {
-	return r.desc.Size
+	return r.size
 }
 
 func oneOffProgress(ctx context.Context, id string) func(err error) error {
@@ -377,7 +377,7 @@ func (s3Client *s3ClientWrapper) ReaderAt(ctx context.Context, desc ocispecs.Des
 	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
 		return s3Client.getReader(blobKey(desc.Digest))
 	})
-	return &readerAt{ReaderAtCloser: readerAtCloser, desc: desc}, nil
+	return &readerAt{ReaderAtCloser: readerAtCloser, size: desc.Size}, nil
 }
 
 func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig) (bool, error) {
