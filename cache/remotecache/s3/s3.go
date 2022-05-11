@@ -66,7 +66,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 	if !ok {
 		bucket, ok = os.LookupEnv("AWS_BUCKET")
 		if !ok {
-			errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
+			return nil, errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
 		}
 	}
 
@@ -74,7 +74,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 	if !ok {
 		region, ok = os.LookupEnv("AWS_REGION")
 		if !ok {
-			errors.Errorf("region ($AWS_REGION) not set for s3 cache")
+			return nil, errors.Errorf("region ($AWS_REGION) not set for s3 cache")
 		}
 	}
 
