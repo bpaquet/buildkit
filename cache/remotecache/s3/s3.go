@@ -104,7 +104,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
-	touchRefresh, _ := time.ParseDuration("24h")
+	touchRefresh := 24 * time.Hour
 
 	touchRefreshStr, ok := attrs[attrTouchRefresh]
 	if ok {
