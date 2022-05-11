@@ -491,7 +491,6 @@ func (s3Client *s3ClientWrapper) touch(key string) error {
 	}
 
 	_, err := s3Client.awsClient.CopyObject(copy)
-
 	return err
 }
 
