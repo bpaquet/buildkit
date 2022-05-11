@@ -61,6 +61,14 @@ type Config struct {
 	S3ForcePathStyle bool
 }
 
+func (c Config) manifestKey(name string) string {
+	return c.Prefix + c.ManifestsPrefix + name
+}
+
+func (c Config) blobKey(dgst digest.Digest) string {
+	return c.Prefix + c.BlobsPrefix + dgst.String()
+}
+
 func getConfig(attrs map[string]string) (Config, error) {
 	bucket, ok := attrs[attrBucket]
 	if !ok {
@@ -202,7 +210,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		}
 		diffID = dgst
 
-		key := blobKey(e.config, dgstPair.Descriptor.Digest)
+		key := e.config.blobKey(dgstPair.Descriptor.Digest)
 		exists, err := e.s3Client.exists(key)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to check file presence in cache")
@@ -248,7 +256,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 	}
 
 	for _, name := range e.config.Names {
-		if err := e.s3Client.saveMutable(manifestKey(e.config, name), dt); err != nil {
+		if err := e.s3Client.saveMutable(e.config.manifestKey(name), dt); err != nil {
 			return nil, errors.Wrapf(err, "error writing manifest: %s", name)
 		}
 	}
@@ -304,7 +312,7 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 
 func (i *importer) load() (*v1.CacheChains, error) {
 	var config v1.CacheConfig
-	found, err := i.s3Client.getManifest(manifestKey(i.config, i.config.Names[0]), &config)
+	found, err := i.s3Client.getManifest(i.config.manifestKey(i.config.Names[0]), &config)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +358,7 @@ type s3LayerProvider struct {
 
 func (p *s3LayerProvider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
 	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
-		return p.s3Client.getReader(blobKey(p.config, desc.Digest))
+		return p.s3Client.getReader(p.config.blobKey(desc.Digest))
 	})
 	return &readerAt{ReaderAtCloser: readerAtCloser, desc: desc}, nil
 }
@@ -378,14 +386,6 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 		pw.Close()
 		return err
 	}
-}
-
-func manifestKey(config Config, name string) string {
-	return config.Prefix + config.ManifestsPrefix + name
-}
-
-func blobKey(config Config, dgst digest.Digest) string {
-	return config.Prefix + config.BlobsPrefix + dgst.String()
 }
 
 type s3ClientWrapper struct {
