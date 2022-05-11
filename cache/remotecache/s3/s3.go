@@ -422,12 +422,10 @@ func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
 }
 
 func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
-	input := &s3.HeadObjectInput{
+	head, err := s3Client.awsClient.HeadObject(&s3.HeadObjectInput{
 		Bucket: &s3Client.bucket,
 		Key:    &key,
-	}
-
-	head, err := s3Client.awsClient.HeadObject(input)
+	})
 	if err != nil {
 		if isNotFound(err) {
 			return nil, nil
