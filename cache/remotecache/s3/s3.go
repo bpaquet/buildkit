@@ -362,10 +362,20 @@ type s3ClientWrapper struct {
 }
 
 func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
-	awsClient, err := newAwsClient(config.Region, config.Role, config.EndpointURL, config.AccessKeyID, config.SecretAccessKey, config.S3ForcePathStyle)
+	s, err := sess.NewSession(&aws.Config{Region: &config.Region, Endpoint: &config.EndpointURL, S3ForcePathStyle: &config.S3ForcePathStyle})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
+
+	var creds *credentials.Credentials
+	if config.Role != "" {
+		creds = stscreds.NewCredentials(s, config.Role)
+	} else if config.AccessKeyID != "" && config.SecretAccessKey != "" {
+		creds = credentials.NewStaticCredentials(config.AccessKeyID, config.SecretAccessKey, "")
+	}
+
+	awsClient := s3.New(s, &aws.Config{Credentials: creds})
+
 	return &s3ClientWrapper{
 		awsClient: awsClient,
 		uploader:  s3manager.NewUploaderWithClient(awsClient),
@@ -443,25 +453,6 @@ func (s3Client *s3ClientWrapper) touch(key string) error {
 		Key:        &key,
 	})
 	return err
-}
-
-func newAwsClient(region, role, endpointURL, accessKeyID, secretAccessKey string, s3ForcePathStyle bool) (*s3.S3, error) {
-	s, err := sess.NewSession(&aws.Config{Region: &region, Endpoint: &endpointURL, S3ForcePathStyle: &s3ForcePathStyle})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
-
-	if role != "" {
-		creds := stscreds.NewCredentials(s, role)
-		return s3.New(s, &aws.Config{Credentials: creds}), nil
-	}
-
-	if accessKeyID != "" && secretAccessKey != "" {
-		creds := credentials.NewStaticCredentials(accessKeyID, secretAccessKey, "")
-		return s3.New(s, &aws.Config{Credentials: creds}), nil
-	}
-
-	return s3.New(s), nil
 }
 
 func isNotFound(err error) bool {
