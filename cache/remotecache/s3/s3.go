@@ -403,8 +403,7 @@ func blobKey(config *Config, dgst digest.Digest) string {
 }
 
 type s3ClientWrapper struct {
-	config *Config
-
+	config    *Config
 	awsClient *s3.S3
 	uploader  *s3manager.Uploader
 }
