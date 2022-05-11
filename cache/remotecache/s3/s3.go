@@ -177,11 +177,11 @@ type exporter struct {
 }
 
 func NewExporter(config *Config) (remotecache.Exporter, error) {
-	cc := v1.NewCacheChains()
 	s3Client, err := newS3ClientWrapper(config)
 	if err != nil {
 		return nil, err
 	}
+	cc := v1.NewCacheChains()
 	return &exporter{CacheExporterTarget: cc, chains: cc, s3Client: s3Client, config: config}, nil
 }
 
