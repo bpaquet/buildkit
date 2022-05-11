@@ -293,10 +293,10 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 	if l.Annotations == nil {
 		return nil, errors.Errorf("cache layer with missing annotations")
 	}
-	annotations := map[string]string{}
 	if l.Annotations.DiffID == "" {
 		return nil, errors.Errorf("cache layer with missing diffid")
 	}
+	annotations := map[string]string{}
 	annotations["containerd.io/uncompressed"] = l.Annotations.DiffID.String()
 	if !l.Annotations.CreatedAt.IsZero() {
 		txt, err := l.Annotations.CreatedAt.MarshalText()
