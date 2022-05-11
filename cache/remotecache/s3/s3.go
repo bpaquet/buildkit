@@ -173,16 +173,14 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		if dgstPair.Descriptor.Annotations == nil {
 			return nil, errors.Errorf("invalid descriptor without annotations")
 		}
-		var diffID digest.Digest
 		v, ok := dgstPair.Descriptor.Annotations["containerd.io/uncompressed"]
 		if !ok {
 			return nil, errors.Errorf("invalid descriptor without uncompressed annotation")
 		}
-		dgst, err := digest.Parse(v)
+		diffID, err := digest.Parse(v)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to parse uncompressed annotation")
 		}
-		diffID = dgst
 
 		key := blobKey(dgstPair.Descriptor.Digest)
 		exists, err := e.s3Client.exists(key)
