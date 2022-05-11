@@ -35,9 +35,6 @@ const (
 	attrBucket           = "bucket"
 	attrRegion           = "region"
 	attrRole             = "role"
-	attrPrefix           = "prefix"
-	attrManifestsPrefix  = "manifests_prefix"
-	attrBlobsPrefix      = "blobs_prefix"
 	attrName             = "name"
 	attrTouchRefresh     = "touch_refresh"
 	attrEndpointURL      = "endpoint_url"
@@ -50,9 +47,6 @@ type Config struct {
 	Bucket           string
 	Region           string
 	Role             string
-	Prefix           string
-	ManifestsPrefix  string
-	BlobsPrefix      string
 	Names            []string
 	TouchRefresh     time.Duration
 	EndpointURL      string
@@ -61,12 +55,20 @@ type Config struct {
 	S3ForcePathStyle bool
 }
 
-func getConfig(attrs map[string]string) (*Config, error) {
+func manifestKey(name string) string {
+	return "manifests/" + name
+}
+
+func blobKey(dgst digest.Digest) string {
+	return "blobs/" + dgst.String()
+}
+
+func getConfig(attrs map[string]string) (Config, error) {
 	bucket, ok := attrs[attrBucket]
 	if !ok {
 		bucket, ok = os.LookupEnv("AWS_BUCKET")
 		if !ok {
-			return nil, errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
+			return Config{}, errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
 		}
 	}
 
@@ -74,28 +76,13 @@ func getConfig(attrs map[string]string) (*Config, error) {
 	if !ok {
 		region, ok = os.LookupEnv("AWS_REGION")
 		if !ok {
-			return nil, errors.Errorf("region ($AWS_REGION) not set for s3 cache")
+			return Config{}, errors.Errorf("region ($AWS_REGION) not set for s3 cache")
 		}
 	}
 
 	role, ok := attrs[attrRole]
 	if !ok {
 		role = os.Getenv("AWS_ROLE_ARN")
-	}
-
-	prefix, ok := attrs[attrPrefix]
-	if !ok {
-		prefix = ""
-	}
-
-	manifestsPrefix, ok := attrs[attrManifestsPrefix]
-	if !ok {
-		manifestsPrefix = "manifests/"
-	}
-
-	blobsPrefix, ok := attrs[attrBlobsPrefix]
-	if !ok {
-		blobsPrefix = "blobs/"
 	}
 
 	names := []string{"buildkit"}
@@ -107,7 +94,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
-	touchRefresh, _ := time.ParseDuration("24h")
+	touchRefresh := 24 * time.Hour
 
 	touchRefreshStr, ok := attrs[attrTouchRefresh]
 	if ok {
@@ -117,20 +104,9 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
-	endpointURL, ok := attrs[attrEndpointURL]
-	if !ok {
-		endpointURL = ""
-	}
-
-	accessKeyID, ok := attrs[attrAccessKeyID]
-	if !ok {
-		accessKeyID = ""
-	}
-
-	secretAccessKey, ok := attrs[attrSecretAccessKey]
-	if !ok {
-		secretAccessKey = ""
-	}
+	endpointURL := attrs[attrEndpointURL]
+	accessKeyID := attrs[attrAccessKeyID]
+	secretAccessKey := attrs[attrSecretAccessKey]
 
 	s3ForcePathStyle := false
 	s3ForcePathStyleStr, ok := attrs[attrS3ForcePathStyle]
@@ -141,13 +117,10 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
-	return &Config{
+	return Config{
 		Bucket:           bucket,
 		Region:           region,
 		Role:             role,
-		Prefix:           prefix,
-		ManifestsPrefix:  manifestsPrefix,
-		BlobsPrefix:      blobsPrefix,
 		Names:            names,
 		TouchRefresh:     touchRefresh,
 		EndpointURL:      endpointURL,
@@ -159,30 +132,25 @@ func getConfig(attrs map[string]string) (*Config, error) {
 
 // ResolveCacheExporterFunc for s3 cache exporter.
 func ResolveCacheExporterFunc() remotecache.ResolveCacheExporterFunc {
-	return func(ctx context.Context, g session.Group, attrs map[string]string) (remotecache.Exporter, error) {
+	return func(_ context.Context, _ session.Group, attrs map[string]string) (remotecache.Exporter, error) {
 		config, err := getConfig(attrs)
 		if err != nil {
 			return nil, err
 		}
-
-		return NewExporter(config)
+		s3Client, err := newS3ClientWrapper(config)
+		if err != nil {
+			return nil, err
+		}
+		cc := v1.NewCacheChains()
+		return &exporter{CacheExporterTarget: cc, chains: cc, s3Client: s3Client, config: config}, nil
 	}
 }
 
 type exporter struct {
 	solver.CacheExporterTarget
 	chains   *v1.CacheChains
-	s3Client *s3ClientWrapper
-	config   *Config
-}
-
-func NewExporter(config *Config) (remotecache.Exporter, error) {
-	cc := v1.NewCacheChains()
-	s3Client, err := newS3ClientWrapper(config)
-	if err != nil {
-		return nil, err
-	}
-	return &exporter{CacheExporterTarget: cc, chains: cc, s3Client: s3Client, config: config}, nil
+	s3Client *s3Client
+	config   Config
 }
 
 func (e *exporter) Config() remotecache.Config {
@@ -205,18 +173,16 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		if dgstPair.Descriptor.Annotations == nil {
 			return nil, errors.Errorf("invalid descriptor without annotations")
 		}
-		var diffID digest.Digest
 		v, ok := dgstPair.Descriptor.Annotations["containerd.io/uncompressed"]
 		if !ok {
 			return nil, errors.Errorf("invalid descriptor without uncompressed annotation")
 		}
-		dgst, err := digest.Parse(v)
+		diffID, err := digest.Parse(v)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to parse uncompressed annotation")
 		}
-		diffID = dgst
 
-		key := blobKey(e.config, dgstPair.Descriptor.Digest)
+		key := blobKey(dgstPair.Descriptor.Digest)
 		exists, err := e.s3Client.exists(key)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to check file presence in cache")
@@ -262,7 +228,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 	}
 
 	for _, name := range e.config.Names {
-		if err := e.s3Client.saveMutable(manifestKey(e.config, name), dt); err != nil {
+		if err := e.s3Client.saveMutable(manifestKey(name), dt); err != nil {
 			return nil, errors.Wrapf(err, "error writing manifest: %s", name)
 		}
 	}
@@ -271,7 +237,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 
 // ResolveCacheImporterFunc for s3 cache importer.
 func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
-	return func(ctx context.Context, g session.Group, attrs map[string]string) (remotecache.Importer, ocispecs.Descriptor, error) {
+	return func(_ context.Context, _ session.Group, attrs map[string]string) (remotecache.Importer, ocispecs.Descriptor, error) {
 		config, err := getConfig(attrs)
 		if err != nil {
 			return nil, ocispecs.Descriptor{}, err
@@ -285,18 +251,18 @@ func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
 }
 
 type importer struct {
-	s3Client *s3ClientWrapper
-	config   *Config
+	s3Client *s3Client
+	config   Config
 }
 
 func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorProviderPair, error) {
 	if l.Annotations == nil {
 		return nil, errors.Errorf("cache layer with missing annotations")
 	}
-	annotations := map[string]string{}
 	if l.Annotations.DiffID == "" {
 		return nil, errors.Errorf("cache layer with missing diffid")
 	}
+	annotations := map[string]string{}
 	annotations["containerd.io/uncompressed"] = l.Annotations.DiffID.String()
 	if !l.Annotations.CreatedAt.IsZero() {
 		txt, err := l.Annotations.CreatedAt.MarshalText()
@@ -305,21 +271,20 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 		}
 		annotations["buildkit/createdat"] = string(txt)
 	}
-	desc := ocispecs.Descriptor{
-		MediaType:   l.Annotations.MediaType,
-		Digest:      l.Blob,
-		Size:        l.Annotations.Size,
-		Annotations: annotations,
-	}
 	return &v1.DescriptorProviderPair{
-		Descriptor: desc,
-		Provider:   &s3LayerProvider{i.s3Client, i.config},
+		Provider: i.s3Client,
+		Descriptor: ocispecs.Descriptor{
+			MediaType:   l.Annotations.MediaType,
+			Digest:      l.Blob,
+			Size:        l.Annotations.Size,
+			Annotations: annotations,
+		},
 	}, nil
 }
 
 func (i *importer) load() (*v1.CacheChains, error) {
 	var config v1.CacheConfig
-	found, err := i.s3Client.getManifest(manifestKey(i.config, i.config.Names[0]), &config)
+	found, err := i.s3Client.getManifest(manifestKey(i.config.Names[0]), &config)
 	if err != nil {
 		return nil, err
 	}
@@ -358,25 +323,13 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 	return solver.NewCacheManager(ctx, id, keysStorage, resultStorage), nil
 }
 
-type s3LayerProvider struct {
-	s3Client *s3ClientWrapper
-	config   *Config
-}
-
-func (p *s3LayerProvider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
-	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
-		return p.s3Client.getReader(blobKey(p.config, desc.Digest))
-	})
-	return &readerAt{ReaderAtCloser: readerAtCloser, desc: desc}, nil
-}
-
 type readerAt struct {
 	ReaderAtCloser
-	desc ocispecs.Descriptor
+	size int64
 }
 
 func (r *readerAt) Size() int64 {
-	return r.desc.Size
+	return r.size
 }
 
 func oneOffProgress(ctx context.Context, id string) func(err error) error {
@@ -395,41 +348,46 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 	}
 }
 
-func manifestKey(config *Config, name string) string {
-	return config.Prefix + config.ManifestsPrefix + name
+type s3Client struct {
+	*s3.S3
+	*s3manager.Uploader
+	bucket string
 }
 
-func blobKey(config *Config, dgst digest.Digest) string {
-	return config.Prefix + config.BlobsPrefix + dgst.String()
-}
-
-type s3ClientWrapper struct {
-	config *Config
-
-	awsClient *s3.S3
-	uploader  *s3manager.Uploader
-}
-
-func newS3ClientWrapper(config *Config) (*s3ClientWrapper, error) {
-	awsClient, err := newAwsClient(config.Region, config.Role, config.EndpointURL, config.AccessKeyID, config.SecretAccessKey, config.S3ForcePathStyle)
+func newS3ClientWrapper(config Config) (*s3Client, error) {
+	s, err := sess.NewSession(&aws.Config{Region: &config.Region, Endpoint: &config.EndpointURL, S3ForcePathStyle: &config.S3ForcePathStyle})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
-	return &s3ClientWrapper{
-		config: config,
 
-		awsClient: awsClient,
-		uploader:  s3manager.NewUploaderWithClient(awsClient),
+	var creds *credentials.Credentials
+	if config.Role != "" {
+		creds = stscreds.NewCredentials(s, config.Role)
+	} else if config.AccessKeyID != "" && config.SecretAccessKey != "" {
+		creds = credentials.NewStaticCredentials(config.AccessKeyID, config.SecretAccessKey, "")
+	}
+
+	awsClient := s3.New(s, &aws.Config{Credentials: creds})
+
+	return &s3Client{
+		S3:       awsClient,
+		Uploader: s3manager.NewUploaderWithClient(awsClient),
+		bucket:   config.Bucket,
 	}, nil
 }
 
-func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig) (bool, error) {
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
-	}
+func (s3Client *s3Client) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
+	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
+		return s3Client.getReader(blobKey(desc.Digest))
+	})
+	return &readerAt{ReaderAtCloser: readerAtCloser, size: desc.Size}, nil
+}
 
-	output, err := s3Client.awsClient.GetObject(input)
+func (s3Client *s3Client) getManifest(key string, config *v1.CacheConfig) (bool, error) {
+	output, err := s3Client.GetObject(&s3.GetObjectInput{
+		Bucket: &s3Client.bucket,
+		Key:    &key,
+	})
 	if err != nil {
 		if isNotFound(err) {
 			return false, nil
@@ -446,36 +404,31 @@ func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig)
 	return true, nil
 }
 
-func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
-	}
-
-	output, err := s3Client.awsClient.GetObject(input)
+func (s3Client *s3Client) getReader(key string) (io.ReadCloser, error) {
+	output, err := s3Client.GetObject(&s3.GetObjectInput{
+		Bucket: &s3Client.bucket,
+		Key:    &key,
+	})
 	if err != nil {
 		return nil, err
 	}
 	return output.Body, nil
 }
 
-func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
-	input := &s3manager.UploadInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
+func (s3Client *s3Client) saveMutable(key string, value []byte) error {
+	_, err := s3Client.Upload(&s3manager.UploadInput{
+		Bucket: &s3Client.bucket,
+		Key:    &key,
 		Body:   bytes.NewReader(value),
-	}
-	_, err := s3Client.uploader.Upload(input)
+	})
 	return err
 }
 
-func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
-	input := &s3.HeadObjectInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
-	}
-
-	head, err := s3Client.awsClient.HeadObject(input)
+func (s3Client *s3Client) exists(key string) (*time.Time, error) {
+	head, err := s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: &s3Client.bucket,
+		Key:    &key,
+	})
 	if err != nil {
 		if isNotFound(err) {
 			return nil, nil
@@ -485,35 +438,14 @@ func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
 	return head.LastModified, nil
 }
 
-func (s3Client *s3ClientWrapper) touch(key string) error {
-	copy := &s3.CopyObjectInput{
-		Bucket:     aws.String(s3Client.config.Bucket),
-		CopySource: aws.String(fmt.Sprintf("%s/%s", s3Client.config.Bucket, key)),
-		Key:        aws.String(key),
-	}
-
-	_, err := s3Client.awsClient.CopyObject(copy)
-
+func (s3Client *s3Client) touch(key string) error {
+	copySource := fmt.Sprintf("%s/%s", s3Client.bucket, key)
+	_, err := s3Client.CopyObject(&s3.CopyObjectInput{
+		Bucket:     &s3Client.bucket,
+		CopySource: &copySource,
+		Key:        &key,
+	})
 	return err
-}
-
-func newAwsClient(region, role, endpointURL, accessKeyID, secretAccessKey string, s3ForcePathStyle bool) (*s3.S3, error) {
-	s, err := sess.NewSession(&aws.Config{Region: &region, Endpoint: &endpointURL, S3ForcePathStyle: &s3ForcePathStyle})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %v", err)
-	}
-
-	if role != "" {
-		creds := stscreds.NewCredentials(s, role)
-		return s3.New(s, &aws.Config{Credentials: creds}), nil
-	}
-
-	if accessKeyID != "" && secretAccessKey != "" {
-		creds := credentials.NewStaticCredentials(accessKeyID, secretAccessKey, "")
-		return s3.New(s, &aws.Config{Credentials: creds}), nil
-	}
-
-	return s3.New(s), nil
 }
 
 func isNotFound(err error) bool {
