@@ -422,8 +422,8 @@ func newS3ClientWrapper(config *Config) (*s3ClientWrapper, error) {
 
 func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig) (bool, error) {
 	input := &s3.GetObjectInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
+		Bucket: &s3Client.config.Bucket,
+		Key:    &key,
 	}
 
 	output, err := s3Client.awsClient.GetObject(input)
@@ -445,8 +445,8 @@ func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig)
 
 func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
 	input := &s3.GetObjectInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
+		Bucket: &s3Client.config.Bucket,
+		Key:    &key,
 	}
 
 	output, err := s3Client.awsClient.GetObject(input)
@@ -458,8 +458,8 @@ func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
 
 func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
 	input := &s3manager.UploadInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
+		Bucket: &s3Client.config.Bucket,
+		Key:    &key,
 		Body:   bytes.NewReader(value),
 	}
 	_, err := s3Client.uploader.Upload(input)
@@ -468,8 +468,8 @@ func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
 
 func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
 	input := &s3.HeadObjectInput{
-		Bucket: aws.String(s3Client.config.Bucket),
-		Key:    aws.String(key),
+		Bucket: &s3Client.config.Bucket,
+		Key:    &key,
 	}
 
 	head, err := s3Client.awsClient.HeadObject(input)
@@ -483,10 +483,11 @@ func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
 }
 
 func (s3Client *s3ClientWrapper) touch(key string) error {
+	copySource := fmt.Sprintf("%s/%s", s3Client.config.Bucket, key)
 	copy := &s3.CopyObjectInput{
-		Bucket:     aws.String(s3Client.config.Bucket),
-		CopySource: aws.String(fmt.Sprintf("%s/%s", s3Client.config.Bucket, key)),
-		Key:        aws.String(key),
+		Bucket:     &s3Client.config.Bucket,
+		CopySource: &copySource,
+		Key:        &key,
 	}
 
 	_, err := s3Client.awsClient.CopyObject(copy)
