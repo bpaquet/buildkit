@@ -145,7 +145,7 @@ func ResolveCacheExporterFunc() remotecache.ResolveCacheExporterFunc {
 type exporter struct {
 	solver.CacheExporterTarget
 	chains   *v1.CacheChains
-	s3Client *s3ClientWrapper
+	s3Client *s3Client
 	config   Config
 }
 
@@ -258,7 +258,7 @@ func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
 }
 
 type importer struct {
-	s3Client *s3ClientWrapper
+	s3Client *s3Client
 	config   Config
 }
 
@@ -355,13 +355,13 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 	}
 }
 
-type s3ClientWrapper struct {
-	awsClient *s3.S3
-	uploader  *s3manager.Uploader
-	bucket    string
+type s3Client struct {
+	*s3.S3
+	*s3manager.Uploader
+	bucket string
 }
 
-func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
+func newS3ClientWrapper(config Config) (*s3Client, error) {
 	s, err := sess.NewSession(&aws.Config{Region: &config.Region, Endpoint: &config.EndpointURL, S3ForcePathStyle: &config.S3ForcePathStyle})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -376,22 +376,22 @@ func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
 
 	awsClient := s3.New(s, &aws.Config{Credentials: creds})
 
-	return &s3ClientWrapper{
-		awsClient: awsClient,
-		uploader:  s3manager.NewUploaderWithClient(awsClient),
-		bucket:    config.Bucket,
+	return &s3Client{
+		S3:       awsClient,
+		Uploader: s3manager.NewUploaderWithClient(awsClient),
+		bucket:   config.Bucket,
 	}, nil
 }
 
-func (s3Client *s3ClientWrapper) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
+func (s3Client *s3Client) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
 	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
 		return s3Client.getReader(blobKey(desc.Digest))
 	})
 	return &readerAt{ReaderAtCloser: readerAtCloser, size: desc.Size}, nil
 }
 
-func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig) (bool, error) {
-	output, err := s3Client.awsClient.GetObject(&s3.GetObjectInput{
+func (s3Client *s3Client) getManifest(key string, config *v1.CacheConfig) (bool, error) {
+	output, err := s3Client.GetObject(&s3.GetObjectInput{
 		Bucket: &s3Client.bucket,
 		Key:    &key,
 	})
@@ -411,8 +411,8 @@ func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig)
 	return true, nil
 }
 
-func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
-	output, err := s3Client.awsClient.GetObject(&s3.GetObjectInput{
+func (s3Client *s3Client) getReader(key string) (io.ReadCloser, error) {
+	output, err := s3Client.GetObject(&s3.GetObjectInput{
 		Bucket: &s3Client.bucket,
 		Key:    &key,
 	})
@@ -422,8 +422,8 @@ func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
 	return output.Body, nil
 }
 
-func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
-	_, err := s3Client.uploader.Upload(&s3manager.UploadInput{
+func (s3Client *s3Client) saveMutable(key string, value []byte) error {
+	_, err := s3Client.Upload(&s3manager.UploadInput{
 		Bucket: &s3Client.bucket,
 		Key:    &key,
 		Body:   bytes.NewReader(value),
@@ -431,8 +431,8 @@ func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
 	return err
 }
 
-func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
-	head, err := s3Client.awsClient.HeadObject(&s3.HeadObjectInput{
+func (s3Client *s3Client) exists(key string) (*time.Time, error) {
+	head, err := s3Client.HeadObject(&s3.HeadObjectInput{
 		Bucket: &s3Client.bucket,
 		Key:    &key,
 	})
@@ -445,9 +445,9 @@ func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
 	return head.LastModified, nil
 }
 
-func (s3Client *s3ClientWrapper) touch(key string) error {
+func (s3Client *s3Client) touch(key string) error {
 	copySource := fmt.Sprintf("%s/%s", s3Client.bucket, key)
-	_, err := s3Client.awsClient.CopyObject(&s3.CopyObjectInput{
+	_, err := s3Client.CopyObject(&s3.CopyObjectInput{
 		Bucket:     &s3Client.bucket,
 		CopySource: &copySource,
 		Key:        &key,
