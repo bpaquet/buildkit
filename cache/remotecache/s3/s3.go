@@ -35,9 +35,6 @@ const (
 	attrBucket           = "bucket"
 	attrRegion           = "region"
 	attrRole             = "role"
-	attrPrefix           = "prefix"
-	attrManifestsPrefix  = "manifests_prefix"
-	attrBlobsPrefix      = "blobs_prefix"
 	attrName             = "name"
 	attrTouchRefresh     = "touch_refresh"
 	attrEndpointURL      = "endpoint_url"
@@ -50,9 +47,6 @@ type Config struct {
 	Bucket           string
 	Region           string
 	Role             string
-	Prefix           string
-	ManifestsPrefix  string
-	BlobsPrefix      string
 	Names            []string
 	TouchRefresh     time.Duration
 	EndpointURL      string
@@ -61,12 +55,12 @@ type Config struct {
 	S3ForcePathStyle bool
 }
 
-func (c Config) manifestKey(name string) string {
-	return c.Prefix + c.ManifestsPrefix + name
+func manifestKey(name string) string {
+	return "manifests/" + name
 }
 
-func (c Config) blobKey(dgst digest.Digest) string {
-	return c.Prefix + c.BlobsPrefix + dgst.String()
+func blobKey(dgst digest.Digest) string {
+	return "blobs/" + dgst.String()
 }
 
 func getConfig(attrs map[string]string) (Config, error) {
@@ -89,18 +83,6 @@ func getConfig(attrs map[string]string) (Config, error) {
 	role, ok := attrs[attrRole]
 	if !ok {
 		role = os.Getenv("AWS_ROLE_ARN")
-	}
-
-	prefix := attrs[attrPrefix]
-
-	manifestsPrefix, ok := attrs[attrManifestsPrefix]
-	if !ok {
-		manifestsPrefix = "manifests/"
-	}
-
-	blobsPrefix, ok := attrs[attrBlobsPrefix]
-	if !ok {
-		blobsPrefix = "blobs/"
 	}
 
 	names := []string{"buildkit"}
@@ -139,9 +121,6 @@ func getConfig(attrs map[string]string) (Config, error) {
 		Bucket:           bucket,
 		Region:           region,
 		Role:             role,
-		Prefix:           prefix,
-		ManifestsPrefix:  manifestsPrefix,
-		BlobsPrefix:      blobsPrefix,
 		Names:            names,
 		TouchRefresh:     touchRefresh,
 		EndpointURL:      endpointURL,
@@ -210,7 +189,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 		}
 		diffID = dgst
 
-		key := e.config.blobKey(dgstPair.Descriptor.Digest)
+		key := blobKey(dgstPair.Descriptor.Digest)
 		exists, err := e.s3Client.exists(key)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to check file presence in cache")
@@ -256,7 +235,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 	}
 
 	for _, name := range e.config.Names {
-		if err := e.s3Client.saveMutable(e.config.manifestKey(name), dt); err != nil {
+		if err := e.s3Client.saveMutable(manifestKey(name), dt); err != nil {
 			return nil, errors.Wrapf(err, "error writing manifest: %s", name)
 		}
 	}
@@ -312,7 +291,7 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 
 func (i *importer) load() (*v1.CacheChains, error) {
 	var config v1.CacheConfig
-	found, err := i.s3Client.getManifest(i.config.manifestKey(i.config.Names[0]), &config)
+	found, err := i.s3Client.getManifest(manifestKey(i.config.Names[0]), &config)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +375,7 @@ func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
 
 func (s3Client *s3ClientWrapper) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
 	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
-		return s3Client.getReader(s3Client.config.blobKey(desc.Digest))
+		return s3Client.getReader(blobKey(desc.Digest))
 	})
 	return &readerAt{ReaderAtCloser: readerAtCloser, desc: desc}, nil
 }
