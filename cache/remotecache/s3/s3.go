@@ -356,9 +356,9 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 }
 
 type s3ClientWrapper struct {
-	config    Config
 	awsClient *s3.S3
 	uploader  *s3manager.Uploader
+	bucket    string
 }
 
 func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
@@ -367,9 +367,9 @@ func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
 		return nil, err
 	}
 	return &s3ClientWrapper{
-		config:    config,
 		awsClient: awsClient,
 		uploader:  s3manager.NewUploaderWithClient(awsClient),
+		bucket:    config.Bucket,
 	}, nil
 }
 
@@ -382,7 +382,7 @@ func (s3Client *s3ClientWrapper) ReaderAt(ctx context.Context, desc ocispecs.Des
 
 func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig) (bool, error) {
 	output, err := s3Client.awsClient.GetObject(&s3.GetObjectInput{
-		Bucket: &s3Client.config.Bucket,
+		Bucket: &s3Client.bucket,
 		Key:    &key,
 	})
 	if err != nil {
@@ -403,7 +403,7 @@ func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig)
 
 func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
 	output, err := s3Client.awsClient.GetObject(&s3.GetObjectInput{
-		Bucket: &s3Client.config.Bucket,
+		Bucket: &s3Client.bucket,
 		Key:    &key,
 	})
 	if err != nil {
@@ -414,7 +414,7 @@ func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
 
 func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
 	_, err := s3Client.uploader.Upload(&s3manager.UploadInput{
-		Bucket: &s3Client.config.Bucket,
+		Bucket: &s3Client.bucket,
 		Key:    &key,
 		Body:   bytes.NewReader(value),
 	})
@@ -423,7 +423,7 @@ func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
 
 func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
 	input := &s3.HeadObjectInput{
-		Bucket: &s3Client.config.Bucket,
+		Bucket: &s3Client.bucket,
 		Key:    &key,
 	}
 
@@ -438,9 +438,9 @@ func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
 }
 
 func (s3Client *s3ClientWrapper) touch(key string) error {
-	copySource := fmt.Sprintf("%s/%s", s3Client.config.Bucket, key)
+	copySource := fmt.Sprintf("%s/%s", s3Client.bucket, key)
 	_, err := s3Client.awsClient.CopyObject(&s3.CopyObjectInput{
-		Bucket:     &s3Client.config.Bucket,
+		Bucket:     &s3Client.bucket,
 		CopySource: &copySource,
 		Key:        &key,
 	})
