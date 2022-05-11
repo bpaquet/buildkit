@@ -83,10 +83,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		role = os.Getenv("AWS_ROLE_ARN")
 	}
 
-	prefix, ok := attrs[attrPrefix]
-	if !ok {
-		prefix = ""
-	}
+	prefix := attrs[attrPrefix]
 
 	manifestsPrefix, ok := attrs[attrManifestsPrefix]
 	if !ok {
@@ -117,20 +114,9 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
-	endpointURL, ok := attrs[attrEndpointURL]
-	if !ok {
-		endpointURL = ""
-	}
-
-	accessKeyID, ok := attrs[attrAccessKeyID]
-	if !ok {
-		accessKeyID = ""
-	}
-
-	secretAccessKey, ok := attrs[attrSecretAccessKey]
-	if !ok {
-		secretAccessKey = ""
-	}
+	endpointURL := attrs[attrEndpointURL]
+	accessKeyID := attrs[attrAccessKeyID]
+	secretAccessKey := attrs[attrSecretAccessKey]
 
 	s3ForcePathStyle := false
 	s3ForcePathStyleStr, ok := attrs[attrS3ForcePathStyle]
