@@ -137,8 +137,12 @@ func ResolveCacheExporterFunc() remotecache.ResolveCacheExporterFunc {
 		if err != nil {
 			return nil, err
 		}
-
-		return NewExporter(config)
+		s3Client, err := newS3ClientWrapper(config)
+		if err != nil {
+			return nil, err
+		}
+		cc := v1.NewCacheChains()
+		return &exporter{CacheExporterTarget: cc, chains: cc, s3Client: s3Client, config: config}, nil
 	}
 }
 
@@ -147,15 +151,6 @@ type exporter struct {
 	chains   *v1.CacheChains
 	s3Client *s3Client
 	config   Config
-}
-
-func NewExporter(config Config) (remotecache.Exporter, error) {
-	s3Client, err := newS3ClientWrapper(config)
-	if err != nil {
-		return nil, err
-	}
-	cc := v1.NewCacheChains()
-	return &exporter{CacheExporterTarget: cc, chains: cc, s3Client: s3Client, config: config}, nil
 }
 
 func (e *exporter) Config() remotecache.Config {
