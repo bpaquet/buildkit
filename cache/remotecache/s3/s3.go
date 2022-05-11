@@ -300,7 +300,7 @@ func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorPr
 		annotations["buildkit/createdat"] = string(txt)
 	}
 	return &v1.DescriptorProviderPair{
-		Provider: &s3LayerProvider{i.s3Client, i.config},
+		Provider: i.s3Client,
 		Descriptor: ocispecs.Descriptor{
 			MediaType:   l.Annotations.MediaType,
 			Digest:      l.Blob,
@@ -351,18 +351,6 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 	return solver.NewCacheManager(ctx, id, keysStorage, resultStorage), nil
 }
 
-type s3LayerProvider struct {
-	s3Client *s3ClientWrapper
-	config   Config
-}
-
-func (p *s3LayerProvider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
-	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
-		return p.s3Client.getReader(p.config.blobKey(desc.Digest))
-	})
-	return &readerAt{ReaderAtCloser: readerAtCloser, desc: desc}, nil
-}
-
 type readerAt struct {
 	ReaderAtCloser
 	desc ocispecs.Descriptor
@@ -404,6 +392,13 @@ func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
 		awsClient: awsClient,
 		uploader:  s3manager.NewUploaderWithClient(awsClient),
 	}, nil
+}
+
+func (s3Client *s3ClientWrapper) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
+	readerAtCloser := toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
+		return s3Client.getReader(s3Client.config.blobKey(desc.Digest))
+	})
+	return &readerAt{ReaderAtCloser: readerAtCloser, desc: desc}, nil
 }
 
 func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig) (bool, error) {
