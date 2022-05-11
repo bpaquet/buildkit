@@ -414,8 +414,7 @@ func newS3ClientWrapper(config *Config) (*s3ClientWrapper, error) {
 		return nil, err
 	}
 	return &s3ClientWrapper{
-		config: config,
-
+		config:    config,
 		awsClient: awsClient,
 		uploader:  s3manager.NewUploaderWithClient(awsClient),
 	}, nil
