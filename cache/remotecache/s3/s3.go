@@ -457,12 +457,11 @@ func (s3Client *s3ClientWrapper) getReader(key string) (io.ReadCloser, error) {
 }
 
 func (s3Client *s3ClientWrapper) saveMutable(key string, value []byte) error {
-	input := &s3manager.UploadInput{
+	_, err := s3Client.uploader.Upload(&s3manager.UploadInput{
 		Bucket: &s3Client.config.Bucket,
 		Key:    &key,
 		Body:   bytes.NewReader(value),
-	}
-	_, err := s3Client.uploader.Upload(input)
+	})
 	return err
 }
 
