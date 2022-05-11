@@ -484,13 +484,11 @@ func (s3Client *s3ClientWrapper) exists(key string) (*time.Time, error) {
 
 func (s3Client *s3ClientWrapper) touch(key string) error {
 	copySource := fmt.Sprintf("%s/%s", s3Client.config.Bucket, key)
-	copy := &s3.CopyObjectInput{
+	_, err := s3Client.awsClient.CopyObject(&s3.CopyObjectInput{
 		Bucket:     &s3Client.config.Bucket,
 		CopySource: &copySource,
 		Key:        &key,
-	}
-
-	_, err := s3Client.awsClient.CopyObject(copy)
+	})
 	return err
 }
 
