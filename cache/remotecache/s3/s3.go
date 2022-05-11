@@ -145,7 +145,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 
 // ResolveCacheExporterFunc for s3 cache exporter.
 func ResolveCacheExporterFunc() remotecache.ResolveCacheExporterFunc {
-	return func(ctx context.Context, g session.Group, attrs map[string]string) (remotecache.Exporter, error) {
+	return func(_ context.Context, _ session.Group, attrs map[string]string) (remotecache.Exporter, error) {
 		config, err := getConfig(attrs)
 		if err != nil {
 			return nil, err
@@ -257,7 +257,7 @@ func (e *exporter) Finalize(ctx context.Context) (map[string]string, error) {
 
 // ResolveCacheImporterFunc for s3 cache importer.
 func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
-	return func(ctx context.Context, g session.Group, attrs map[string]string) (remotecache.Importer, ocispecs.Descriptor, error) {
+	return func(_ context.Context, _ session.Group, attrs map[string]string) (remotecache.Importer, ocispecs.Descriptor, error) {
 		config, err := getConfig(attrs)
 		if err != nil {
 			return nil, ocispecs.Descriptor{}, err
