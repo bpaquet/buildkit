@@ -61,12 +61,12 @@ type Config struct {
 	S3ForcePathStyle bool
 }
 
-func getConfig(attrs map[string]string) (*Config, error) {
+func getConfig(attrs map[string]string) (Config, error) {
 	bucket, ok := attrs[attrBucket]
 	if !ok {
 		bucket, ok = os.LookupEnv("AWS_BUCKET")
 		if !ok {
-			return nil, errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
+			return Config{}, errors.Errorf("bucket ($AWS_BUCKET) not set for s3 cache")
 		}
 	}
 
@@ -74,7 +74,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 	if !ok {
 		region, ok = os.LookupEnv("AWS_REGION")
 		if !ok {
-			return nil, errors.Errorf("region ($AWS_REGION) not set for s3 cache")
+			return Config{}, errors.Errorf("region ($AWS_REGION) not set for s3 cache")
 		}
 	}
 
@@ -127,7 +127,7 @@ func getConfig(attrs map[string]string) (*Config, error) {
 		}
 	}
 
-	return &Config{
+	return Config{
 		Bucket:           bucket,
 		Region:           region,
 		Role:             role,
@@ -159,10 +159,10 @@ type exporter struct {
 	solver.CacheExporterTarget
 	chains   *v1.CacheChains
 	s3Client *s3ClientWrapper
-	config   *Config
+	config   Config
 }
 
-func NewExporter(config *Config) (remotecache.Exporter, error) {
+func NewExporter(config Config) (remotecache.Exporter, error) {
 	s3Client, err := newS3ClientWrapper(config)
 	if err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func ResolveCacheImporterFunc() remotecache.ResolveCacheImporterFunc {
 
 type importer struct {
 	s3Client *s3ClientWrapper
-	config   *Config
+	config   Config
 }
 
 func (i *importer) makeDescriptorProviderPair(l v1.CacheLayer) (*v1.DescriptorProviderPair, error) {
@@ -345,7 +345,7 @@ func (i *importer) Resolve(ctx context.Context, _ ocispecs.Descriptor, id string
 
 type s3LayerProvider struct {
 	s3Client *s3ClientWrapper
-	config   *Config
+	config   Config
 }
 
 func (p *s3LayerProvider) ReaderAt(ctx context.Context, desc ocispecs.Descriptor) (content.ReaderAt, error) {
@@ -380,21 +380,21 @@ func oneOffProgress(ctx context.Context, id string) func(err error) error {
 	}
 }
 
-func manifestKey(config *Config, name string) string {
+func manifestKey(config Config, name string) string {
 	return config.Prefix + config.ManifestsPrefix + name
 }
 
-func blobKey(config *Config, dgst digest.Digest) string {
+func blobKey(config Config, dgst digest.Digest) string {
 	return config.Prefix + config.BlobsPrefix + dgst.String()
 }
 
 type s3ClientWrapper struct {
-	config    *Config
+	config    Config
 	awsClient *s3.S3
 	uploader  *s3manager.Uploader
 }
 
-func newS3ClientWrapper(config *Config) (*s3ClientWrapper, error) {
+func newS3ClientWrapper(config Config) (*s3ClientWrapper, error) {
 	awsClient, err := newAwsClient(config.Region, config.Role, config.EndpointURL, config.AccessKeyID, config.SecretAccessKey, config.S3ForcePathStyle)
 	if err != nil {
 		return nil, err
