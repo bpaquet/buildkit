@@ -421,12 +421,10 @@ func newS3ClientWrapper(config *Config) (*s3ClientWrapper, error) {
 }
 
 func (s3Client *s3ClientWrapper) getManifest(key string, config *v1.CacheConfig) (bool, error) {
-	input := &s3.GetObjectInput{
+	output, err := s3Client.awsClient.GetObject(&s3.GetObjectInput{
 		Bucket: &s3Client.config.Bucket,
 		Key:    &key,
-	}
-
-	output, err := s3Client.awsClient.GetObject(input)
+	})
 	if err != nil {
 		if isNotFound(err) {
 			return false, nil
